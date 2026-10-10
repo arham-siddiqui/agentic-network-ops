@@ -1,0 +1,80 @@
+rule_files:
+  - alerts.yml
+evaluation_interval: 2s
+tests:
+  - name: CPU baseline, sustained fault, and recovery
+    interval: 1s
+    input_series:
+      - series: 'process_cpu_seconds_total{job="worker",instance="worker:8000"}'
+        values: '0+0.01x30 0.8+0.5x59 30.31+0.01x60'
+    alert_rule_test:
+      - eval_time: 30s
+        alertname: WorkerCpuPressure
+        exp_alerts: []
+      - eval_time: 42s
+        alertname: WorkerCpuPressure
+        exp_alerts: []
+      - eval_time: 60s
+        alertname: WorkerCpuPressure
+        exp_alerts:
+          - exp_labels:
+              job: worker
+              instance: worker:8000
+              severity: warning
+            exp_annotations:
+              summary: Worker CPU usage exceeds 0.30 cores
+              description: Sustained process CPU pressure; inspect service latency and errors for impact.
+      - eval_time: 120s
+        alertname: WorkerCpuPressure
+        exp_alerts: []
+  - name: Short CPU burst does not fire
+    interval: 1s
+    input_series:
+      - series: 'process_cpu_seconds_total{job="worker"}'
+        values: '0+0.01x30 0.8+0.5x3 2.31+0.01x60'
+    alert_rule_test:
+      - eval_time: 50s
+        alertname: WorkerCpuPressure
+        exp_alerts: []
+  - name: Unavailable service fires and recovers
+    interval: 1s
+    input_series:
+      - series: 'up{job="worker",instance="worker:8000"}'
+        values: '1+0x20 0+0x20 1+0x20'
+    alert_rule_test:
+      - eval_time: 20s
+        alertname: ServiceUnavailable
+        exp_alerts: []
+      - eval_time: 36s
+        alertname: ServiceUnavailable
+        exp_alerts:
+          - exp_labels:
+              job: worker
+              instance: worker:8000
+              severity: critical
+            exp_annotations:
+              summary: Application metrics endpoint unavailable
+      - eval_time: 50s
+        alertname: ServiceUnavailable
+        exp_alerts: []
+  - name: Sustained API errors fire and clear
+    interval: 1s
+    input_series:
+      - series: 'lab_http_requests_total{job="api",route="/work",status="200"}'
+        values: '0+10x30 300+0x59 310+10x60'
+      - series: 'lab_http_requests_total{job="api",route="/work",status="502"}'
+        values: '0+0x30 10+10x59 600+0x60'
+    alert_rule_test:
+      - eval_time: 30s
+        alertname: ApiHighErrorRate
+        exp_alerts: []
+      - eval_time: 60s
+        alertname: ApiHighErrorRate
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: API work requests have elevated errors
+      - eval_time: 140s
+        alertname: ApiHighErrorRate
+        exp_alerts: []

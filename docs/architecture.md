@@ -1,0 +1,19 @@
+# Stage 1 architecture
+
+The API and worker are separate processes communicating over HTTP on an internal Compose network. A shared Python package and Docker image keep the small codebase consistent. The API has a lifespan-managed HTTP client and propagates downstream failures with stable error messages. The worker performs a small deterministic checksum computation; traffic volume and fault duration are independently bounded.
+
+One Uvicorn process per service is an intentional constraint. Process CPU and memory metrics from the [Prometheus Python process collector](https://prometheus.github.io/client_python/collector/) describe that process on Linux. The CPU burner is a Python thread inside the worker PID, so its user/system CPU time is included. A separate stress process would require different resource instrumentation. Changing to multiple Uvicorn workers would also require redesigning aggregation and fault targeting.
+
+The CPU thread competes for the GIL and the container's 0.5-core quota, creating actual CPU pressure. Effects on request latency depend on host scheduling, VM capacity, and traffic. The resource alert uses process CPU rate; it does not depend on the scenario's marker. Synthetic rule fixtures verify alert semantics, while the Compose experiment must verify the actual causal chain and recovery on a target machine.
+
+Prometheus scrapes every two seconds and evaluates rules every two seconds. The default CPU rule uses a 15-second rate and ten-second pending period, following [Prometheus alert rule semantics](https://prometheus.io/docs/prometheus/latest/configuration/alerting_rules/). Separate availability and API-error rules provide service-level signals. No Alertmanager is configured: alerts appear in Prometheus and Grafana, with no email, paging, or external delivery.
+
+The [Grafana provisioning configuration](https://grafana.com/docs/grafana/latest/administration/provisioning/) loads a stable Prometheus data-source UID and a ten-panel dashboard from version-controlled files. Panels show scrape health, request volume, p50/p95 latency, error fraction, process CPU/RSS, dependency outcomes, scenario activity, and firing alerts. All time series share the dashboard time axis; scenario JSON events provide exact start/end timestamps for comparison.
+
+Fault controls are separated from workload HTTP. A local Unix socket exists only when the Docker worker starts with fault control enabled. The non-root container user owns it. Start commands validate finite duration bounds before launching a thread; an event supports early stop, a monotonic deadline bounds execution, and shutdown joins the thread. This is a development control, not an authorization mechanism suitable for a hostile multi-tenant service.
+
+Ground truth is recorded separately from telemetry. Each run has a UUID, scenario name, method, duration, configured CPU limit, UTC start time, and an end event with reason and UTC end time. These records are never used to trigger alerts. The host demo reads them only to validate the experiment and saves observations in ignored local artifacts. A future investigator should receive telemetry without these answer labels.
+
+All containers drop capabilities, use non-root users and read-only root filesystems, and have memory/CPU/PID limits. Writable state lives in named volumes or a size-limited temporary filesystem. Source configuration mounts are read-only. Application request logs omit raw query strings and client addresses. Prometheus retention settings are 24 hours and 200 MB; its active head and write-ahead log can require additional space. Grafana state and scenario records persist until explicitly removed.
+
+The implementation is a monitoring substrate. It does not establish cybersecurity detection accuracy, agent correctness, or safe autonomous operations. Those require later labeled experiments and measured evaluation.

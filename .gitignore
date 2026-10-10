@@ -1,0 +1,17 @@
+# Local inputs and private planning material never belong in the repository.
+CODEX_PROJECT_BRIEF*
+**/CODEX_PROJECT_BRIEF*
+private/
+.env
+.env.*
+!.env.example
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+artifacts/
+*.egg-info/
+.DS_Store

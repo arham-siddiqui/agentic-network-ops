@@ -1,0 +1,29 @@
+groups:
+  - name: local-lab
+    rules:
+      # 0.30 CPU seconds/second = 60% of the worker's fixed 0.5-core quota.
+      # Adjust this threshold, rate window, and `for` together when tuning the demo.
+      - alert: WorkerCpuPressure
+        expr: rate(process_cpu_seconds_total{job="worker"}[15s]) > 0.30
+        for: 10s
+        labels:
+          severity: warning
+        annotations:
+          summary: Worker CPU usage exceeds 0.30 cores
+          description: Sustained process CPU pressure; inspect service latency and errors for impact.
+      - alert: ServiceUnavailable
+        expr: up{job=~"api|worker"} == 0
+        for: 10s
+        labels:
+          severity: critical
+        annotations:
+          summary: Application metrics endpoint unavailable
+      - alert: ApiHighErrorRate
+        expr: |
+          sum(rate(lab_http_requests_total{job="api",route="/work",status=~"5.."}[30s]))
+          / clamp_min(sum(rate(lab_http_requests_total{job="api",route="/work"}[30s])), 0.1) > 0.2
+        for: 10s
+        labels:
+          severity: warning
+        annotations:
+          summary: API work requests have elevated errors

@@ -1,0 +1,127 @@
+name: agentic-network-ops
+
+x-sandbox: &sandbox
+  networks: [lab]
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  pids_limit: 64
+  tmpfs:
+    - /tmp:size=16m,mode=1777
+  logging:
+    driver: json-file
+    options:
+      max-size: 10m
+      max-file: "3"
+
+x-app: &app
+  <<: *sandbox
+  build: .
+  image: agentic-network-ops-app:local
+  cpus: 0.5
+  mem_limit: 192m
+  stop_grace_period: 10s
+  healthcheck:
+    test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2).read()"]
+    interval: 5s
+    timeout: 3s
+    retries: 5
+    start_period: 10s
+
+services:
+  worker:
+    <<: *app
+    environment:
+      SERVICE: worker
+      ENABLE_FAULT_CONTROL: "1"
+    volumes:
+      - scenario-data:/var/lib/lab
+
+  api:
+    <<: *app
+    environment:
+      SERVICE: api
+      WORKER_URL: http://worker:8000
+    ports:
+      - "127.0.0.1:${API_PORT:-8000}:8000"
+    depends_on:
+      worker:
+        condition: service_healthy
+
+  prometheus:
+    <<: *sandbox
+    image: prom/prometheus:v3.15.0
+    user: "65534:65534"
+    cpus: 0.5
+    mem_limit: 256m
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=24h
+      - --storage.tsdb.retention.size=200MB
+    ports:
+      - "127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"
+    volumes:
+      - ./monitoring:/etc/prometheus:ro
+      - prometheus-data:/prometheus
+
+  grafana:
+    <<: *sandbox
+    image: grafana/grafana:13.2.3
+    user: "472:472"
+    cpus: 0.5
+    mem_limit: 256m
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-local-lab-only}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+      GF_LOG_MODE: console
+    ports:
+      - "127.0.0.1:${GRAFANA_PORT:-3000}:3000"
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    depends_on: [prometheus]
+
+  load-generator:
+    <<: *app
+    profiles: [tools]
+    cpus: 0.25
+    mem_limit: 96m
+    healthcheck:
+      disable: true
+    command: [python, scripts/generate_load.py, --duration, "120", --rate, "10"]
+    depends_on:
+      api:
+        condition: service_healthy
+
+  smoke-test:
+    <<: *app
+    profiles: [tools]
+    cpus: 0.25
+    mem_limit: 128m
+    healthcheck:
+      disable: true
+    environment:
+      GRAFANA_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-local-lab-only}
+    command: [python, scripts/smoke_test.py]
+    depends_on:
+      api:
+        condition: service_healthy
+      grafana:
+        condition: service_started
+    # The verification container has no access to the worker's control socket.
+
+networks:
+  lab:
+    internal: true
+
+volumes:
+  scenario-data:
+  prometheus-data:
+  grafana-data:
