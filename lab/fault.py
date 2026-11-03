@@ -1,4 +1,4 @@
-"""A bounded CPU thread in the worker PID; controls use a container-local Unix socket."""
+"""Bounded fault scenarios; controls use a container-local Unix socket, never HTTP."""
 
 import asyncio
 import json
@@ -34,9 +34,18 @@ def burn_cpu(stop: threading.Event, deadline: float) -> None:
             value = (value * 1664525 + 1013904223) & 0xFFFFFFFF
 
 
-class CpuFault:
-    def __init__(self, metrics: Metrics, record_path: Path, burner=burn_cpu) -> None:
-        self.metrics, self.record_path, self.burner = metrics, record_path, burner
+class BoundedScenario:
+    """One finite scenario at a time, with paired ground-truth start/end records.
+
+    Subclasses validate their own parameters, then call `_launch`. `apply` runs before the
+    start record (a failure means nothing was injected), `hold` runs in a thread until stop or
+    deadline, and `revert` always runs afterwards.
+    """
+
+    stop_timeout = 3.0
+
+    def __init__(self, marker, record_path: Path) -> None:
+        self.marker, self.record_path = marker, record_path
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -53,45 +62,49 @@ class CpuFault:
         with self._lock:
             return {"active": self._run is not None, "run": self._run}
 
-    def start(self, duration: object = DEFAULT_DURATION) -> dict:
-        seconds = validate_duration(duration)
+    def _launch(self, fields: dict, seconds: float, hold, apply=None, revert=None) -> dict:
         with self._lock:
             if self._run is not None:
-                raise ValueError("CPU fault already active; stop it or wait for expiry")
+                raise ValueError("A fault is already active; stop it or wait for expiry")
             self._stop.clear()
+            if apply is not None:
+                apply()
             run = {
                 "run_id": str(uuid.uuid4()),
-                "scenario": "worker_cpu_pressure",
+                "scenario": fields["scenario"],
                 "started_at": datetime.now(UTC).isoformat(),
-                "duration_seconds": seconds,
-                "max_duration_seconds": MAX_DURATION,
-                "method": "in_process_cpu_thread",
-                "cpu_limit_cores": 0.5,
+                **fields,
             }
             self._record({**run, "event": "scenario_start"})
             self._run = run
-            self.metrics.fault_active.set(1)
+            self.marker.set(1)
             self._thread = threading.Thread(
                 target=self._execute,
-                args=(run, time.monotonic() + seconds),
+                args=(run, time.monotonic() + seconds, hold, revert),
                 daemon=True,
-                name="bounded-cpu-fault",
+                name=f"bounded-{fields['scenario']}",
             )
             self._thread.start()
             return {"active": True, "run": run}
 
-    def _execute(self, run: dict, deadline: float) -> None:
+    def _execute(self, run: dict, deadline: float, hold, revert) -> None:
         reason = "duration_elapsed"
         try:
-            self.burner(self._stop, deadline)
+            hold(self._stop, deadline)
             if self._stop.is_set():
                 reason = "stopped"
         except Exception:
             reason = "error"
             raise
         finally:
+            if revert is not None:
+                try:
+                    revert()
+                except Exception:
+                    # Ground truth must say the impairment may still be in place.
+                    reason = "cleanup_failed"
             with self._lock:
-                self.metrics.fault_active.set(0)
+                self.marker.set(0)
                 self._run = None
                 self._record(
                     {
@@ -107,10 +120,30 @@ class CpuFault:
             self._stop.set()
             thread = self._thread
         if thread is not None:
-            thread.join(timeout=3)
+            thread.join(timeout=self.stop_timeout)
             if thread.is_alive():
-                raise RuntimeError("CPU fault did not stop within the shutdown deadline")
+                raise RuntimeError("Fault did not stop within the shutdown deadline")
         return self.status()
+
+
+class CpuFault(BoundedScenario):
+    def __init__(self, metrics: Metrics, record_path: Path, burner=burn_cpu) -> None:
+        super().__init__(metrics.fault_active, record_path)
+        self.metrics, self.burner = metrics, burner
+
+    def start(self, duration: object = DEFAULT_DURATION) -> dict:
+        seconds = validate_duration(duration)
+        fields = {
+            "scenario": "worker_cpu_pressure",
+            "duration_seconds": seconds,
+            "max_duration_seconds": MAX_DURATION,
+            "method": "in_process_cpu_thread",
+            "cpu_limit_cores": 0.5,
+        }
+        return self._launch(fields, seconds, self.burner)
+
+    def start_request(self, request: dict) -> dict:
+        return self.start(request.get("duration", DEFAULT_DURATION))
 
 
 async def serve_control(controller: CpuFault, path: str = SOCKET_PATH):
@@ -118,9 +151,11 @@ async def serve_control(controller: CpuFault, path: str = SOCKET_PATH):
         try:
             line = await asyncio.wait_for(reader.readline(), timeout=2)
             request = json.loads(line)
+            if not isinstance(request, dict):
+                raise ValueError("request must be a JSON object")
             action = request["action"]
             if action == "start":
-                result = controller.start(request.get("duration", DEFAULT_DURATION))
+                result = await asyncio.to_thread(controller.start_request, request)
             elif action == "stop":
                 result = await asyncio.to_thread(controller.stop)
             elif action == "status":

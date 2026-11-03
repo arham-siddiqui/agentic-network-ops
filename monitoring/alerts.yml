@@ -27,3 +27,34 @@ groups:
           severity: warning
         annotations:
           summary: API work requests have elevated errors
+      # Fraction of API /work responses slower than 250 ms (the histogram bucket boundary). The
+      # traffic guard keeps idle or near-idle windows from firing on a handful of samples.
+      - alert: ApiHighLatency
+        expr: |
+          (
+            1 - sum(rate(lab_http_request_duration_seconds_bucket{job="api",route="/work",le="0.25"}[30s]))
+            / sum(rate(lab_http_request_duration_seconds_count{job="api",route="/work"}[30s]))
+          ) > 0.25
+          and on () sum(rate(lab_http_request_duration_seconds_count{job="api",route="/work"}[30s])) > 0.2
+        for: 10s
+        labels:
+          severity: warning
+        annotations:
+          summary: Over 25% of API work responses take longer than 250 ms
+          description: Compare API and worker latency to locate the delay.
+      - alert: WorkerCallTimeouts
+        expr: |
+          sum(rate(lab_worker_calls_total{job="api",outcome="timeout"}[30s]))
+          / clamp_min(sum(rate(lab_worker_calls_total{job="api"}[30s])), 0.1) > 0.2
+        for: 10s
+        labels:
+          severity: warning
+        annotations:
+          summary: API calls to the worker are timing out
+      - alert: ImpairmentProxyUnavailable
+        expr: up{job="impairment-proxy"} == 0
+        for: 10s
+        labels:
+          severity: critical
+        annotations:
+          summary: API-to-worker proxy metrics endpoint unavailable
