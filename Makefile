@@ -14,7 +14,7 @@ down:
 clean:
 	docker compose down -v
 test:
-	uv run --frozen pytest -q
+	uv run --frozen --all-extras pytest -q
 lint:
 	uv run --frozen ruff check .
 check-rules:

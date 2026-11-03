@@ -122,3 +122,16 @@ def test_report_round_trips_as_json(bundle_for):
     data = json.loads(report.model_dump_json())
     assert data["schema_version"] == "1" and data["predicted_cause"] == "network_latency"
     assert data["action_taken"] is False
+
+
+def test_cli_rediagnoses_a_saved_bundle(bundle_for, tmp_path, monkeypatch, capsys):
+    from agent import cli
+
+    bundle = bundle_for(LATENCY)
+    path = tmp_path / f"{bundle.incident_id}-bundle.json"
+    path.write_text(bundle.model_dump_json())
+    monkeypatch.setattr("sys.argv", ["cli", "diagnose", str(path)])
+    cli.main()
+    saved = json.loads((tmp_path / f"{bundle.incident_id}-report-rules.json").read_text())
+    assert saved["predicted_cause"] == "network_latency"
+    assert "[rules] network_latency" in capsys.readouterr().out

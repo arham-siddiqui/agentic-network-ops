@@ -4,7 +4,10 @@
   python -m agent.cli capture --lookback 120          # save an evidence bundle only
   python -m agent.cli diagnose BUNDLE --mode rules    # re-run a mode on a saved bundle
 
-Nothing here can change Docker, the proxy, or the services; output goes to artifacts/.
+Modes: rules (deterministic), llm_snapshot, llm_tools. LLM modes need `uv sync --extra llm` and
+Anthropic credentials in the host environment (ANTHROPIC_API_KEY or `ant auth login`); each run
+is a billed API request. Nothing here can change Docker, the proxy, or the services; output goes
+to artifacts/.
 """
 
 import argparse
@@ -12,6 +15,8 @@ import json
 import os
 from pathlib import Path
 
+from agent.investigator import investigate_snapshot, investigate_with_tools
+from agent.llm_provider import DEFAULT_MODEL, AnthropicProvider, ProviderError
 from agent.rules_baseline import diagnose
 from agent.schemas import EvidenceBundle, IncidentReport
 from agent.telemetry import MAX_LOOKBACK, MIN_LOOKBACK, PrometheusSource, capture
@@ -20,10 +25,20 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUT = ROOT / "artifacts" / "investigations"
 
 
-def run_mode(bundle: EvidenceBundle, mode: str) -> IncidentReport:
+MODES = ("rules", "llm_snapshot", "llm_tools")
+
+
+def run_mode(bundle: EvidenceBundle, mode: str, model: str = DEFAULT_MODEL):
+    """Return (report, run metadata or None). LLM failures become abstaining reports."""
     if mode == "rules":
-        return diagnose(bundle)
-    raise SystemExit(f"mode {mode!r} is not available yet")
+        return diagnose(bundle), None
+    try:
+        provider = AnthropicProvider(model)
+    except ProviderError as exc:
+        raise SystemExit(f"LLM mode unavailable: {exc}") from exc
+    if mode == "llm_snapshot":
+        return investigate_snapshot(bundle, provider)
+    return investigate_with_tools(bundle, provider)
 
 
 def save(out: Path, name: str, model) -> Path:
@@ -61,10 +76,12 @@ def main() -> None:
         )
         cmd.add_argument("--out", type=Path, default=DEFAULT_OUT)
         if name == "investigate":
-            cmd.add_argument("--mode", choices=["rules"], default="rules")
+            cmd.add_argument("--mode", choices=MODES, default="rules")
+            cmd.add_argument("--model", default=DEFAULT_MODEL)
     cmd = sub.add_parser("diagnose")
     cmd.add_argument("bundle", type=Path)
-    cmd.add_argument("--mode", choices=["rules"], default="rules")
+    cmd.add_argument("--mode", choices=MODES, default="rules")
+    cmd.add_argument("--model", default=DEFAULT_MODEL)
     cmd.add_argument("--out", type=Path)
     args = parser.parse_args()
 
@@ -82,7 +99,16 @@ def main() -> None:
         print(f"evidence bundle: {path}")
         if args.command == "capture":
             return
-    report = run_mode(bundle, args.mode)
+    report, info = run_mode(bundle, args.mode, args.model)
+    if info is not None:
+        path = out / f"{bundle.incident_id}-run-{report.mode}.json"
+        path.write_text(json.dumps(info, indent=2) + "\n")
+        cost = info["estimated_cost_usd"]
+        print(
+            f"model call: {info['outcome']}, {info['turns']} turn(s), "
+            f"{info['input_tokens']}+{info['output_tokens']} tokens, "
+            f"{info['latency_seconds']:.1f} s, est. ${'n/a' if cost is None else f'{cost:.4f}'}"
+        )
     show(report, save(out, f"{bundle.incident_id}-report-{report.mode}.json", report))
 
 

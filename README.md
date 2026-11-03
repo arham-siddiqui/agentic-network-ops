@@ -112,6 +112,22 @@ The investigator runs on the host and reads only the local Prometheus on a loopb
 
 The deterministic baseline ([`agent/rules_baseline.py`](agent/rules_baseline.py)) uses the alert thresholds. It maps the last 30 seconds of evidence to `healthy`, `cpu_pressure`, `network_latency`, `network_connectivity_or_timeout`, `service_unavailable`, or `unknown_or_ambiguous`. It separates network delay from worker slowness by comparing the API's and the worker's own latency. It fails closed: missing, stale, sparse, or undefined data, no traffic, or conflicting signals give `unknown_or_ambiguous`, with the reason listed under `limitations`. Reports follow a versioned schema with cited evidence, user-facing impact, and an advisory recommendation. `action_taken` is always `false`, and nothing in the investigator can change containers, the proxy, or services.
 
+### LLM modes (optional)
+
+```sh
+uv sync --frozen --extra llm                    # adds the Anthropic SDK
+export ANTHROPIC_API_KEY=...                    # or `ant auth login`; never put keys in .env
+uv run --frozen python -m agent.cli investigate --mode llm_snapshot
+uv run --frozen python -m agent.cli diagnose artifacts/investigations/<id>-bundle.json --mode llm_tools
+```
+
+Both modes read the same saved evidence bundle as the rules, so all three can be compared on identical data. Each run is a billed API call; the default model is `claude-opus-5-5` (override with `--model`).
+
+- `llm_snapshot` sends one request containing a standardized summary of every allowlisted series and the firing alerts.
+- `llm_tools` starts with only the window and firing alert names. It may call up to six read-only `get_*` tools (health, rate, latency, slow and error fractions, worker-call outcomes, CPU, RSS, alerts) that summarize series already in the bundle. It has a 30-second wall-time budget and a 60,000-token budget. No tool can query arbitrary PromQL or change anything.
+
+Model output is untrusted. It must match a JSON schema with enumerated causes and metric IDs. Cited values are checked against the bundle, and a mismatch, or (in `llm_tools`) a citation of a metric that was never retrieved, is recorded and added to the report's limitations. Invalid output, a refusal, a provider error, or an exhausted budget produces `unknown_or_ambiguous`. The model's `confidence` is its own uncalibrated estimate. Server-side refusal fallback (`fallbacks: "default"`) is enabled on the request. A `-run-<mode>.json` file records the outcome, turns, token counts, estimated cost, latency, and tool-call names and arguments, but never prompt text or credentials. Tests use a scripted fake provider and make no API calls. **No real-model evaluation has been run yet.**
+
 One overlap is documented rather than hidden. CPU pressure can delay requests before the worker's handler timer starts, so a slow API with a fast worker under high worker CPU is reported as `cpu_pressure` with a limitation saying network delay is not excluded.
 
 ## What the metrics mean
@@ -153,7 +169,7 @@ docker compose down -v      # explicitly delete all lab volumes and recorded his
 
 ```sh
 uv sync --frozen
-make test
+make test                   # includes the optional LLM extra; makes no API calls
 make lint
 make check-rules            # requires Docker; native promtool also works (below)
 ```
