@@ -130,6 +130,16 @@ Model output is untrusted. It must match a JSON schema with enumerated causes an
 
 One overlap is documented rather than hidden. CPU pressure can delay requests before the worker's handler timer starts, so a slow API with a fast worker under high worker CPU is reported as `cpu_pressure` with a limitation saying network delay is not excluded.
 
+## Evaluate diagnoses
+
+```sh
+make evaluate                                      # healthy, cpu, latency, timeout x 3 (~30 min)
+make evaluate REPS=1                               # quicker pass
+make evaluate-score RUN=artifacts/evaluation/<timestamp> MODES=llm_snapshot,llm_tools
+```
+
+Each trial runs bounded load, injects a fault (or nothing, for healthy controls), and captures an evidence bundle 40 seconds later. It then records recovery and cleans up. Bundles and labels go to separate directories; every mode diagnoses the same saved bundles, and predictions are scored against labels only afterwards. Failed trials and abstentions stay in the counts. Results go to `artifacts/evaluation/<timestamp>/` and `artifacts/evaluation-summary.{csv,md}`. See [experimental method](docs/experimental-method.md) for definitions and limits. **No evaluation results exist yet.** The pipeline is tested against a simulated lab only, because Docker has not been available on the development machine.
+
 ## What the metrics mean
 
 | Metric | Meaning |
@@ -191,7 +201,7 @@ promtool test rules monitoring/rules.test.yml
 
 See [validation notes](docs/validation.md) for checks actually executed and remaining Docker verification. On native macOS, the Python client's Linux process metrics are absent. Run the full demo in Linux containers, including Docker Desktop's Linux VM; it measures those application processes, not the Mac host. Node Exporter and cAdvisor are deliberately not dependencies. No packet-loss, security detection, or remediation capability is implemented.
 
-Further design details: [architecture](docs/architecture.md). Next milestones: [roadmap](docs/roadmap.md).
+Further reading: [architecture](docs/architecture.md), [security model](docs/security-model.md), [experimental method](docs/experimental-method.md), [demo walkthrough](docs/demo-walkthrough.md), [roadmap](docs/roadmap.md).
 
 ## Troubleshooting
 

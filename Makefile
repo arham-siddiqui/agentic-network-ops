@@ -1,5 +1,6 @@
 .PHONY: up down clean test lint check-rules load inject-cpu-fault stop-fault fault-status smoke demo \
-	inject-network-fault stop-network-fault network-fault-status network-demo investigate
+	inject-network-fault stop-network-fault network-fault-status network-demo investigate \
+	evaluate evaluate-score
 
 DURATION ?= 60
 SCENARIO ?= latency
@@ -49,3 +50,14 @@ network-demo:
 # Read-only: captures allowlisted telemetry from the local Prometheus and writes a report.
 investigate:
 	uv run --frozen python -m agent.cli investigate --lookback 120
+# Labelled trials (healthy, cpu, latency, timeout x REPS, ~2.5 min each), rules diagnosis, scoring.
+REPS ?= 3
+evaluate:
+	uv run --frozen python -m evaluation.run trials --reps $(REPS)
+# RUN=artifacts/evaluation/<timestamp>; add MODES=llm_snapshot,llm_tools to diagnose with an LLM first.
+evaluate-score:
+ifdef MODES
+	uv run --frozen --extra llm python -m evaluation.run diagnose $(RUN) --modes $(MODES)
+else
+	uv run --frozen python -m evaluation.run score $(RUN)
+endif
