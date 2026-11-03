@@ -100,6 +100,20 @@ CPU usage should rise clearly. Request latency may rise, but a fixed amount of u
 
 To tune the CPU alert, edit its threshold, `[15s]` rate window, or `for: 10s` in `monitoring/alerts.yml`, update the rule fixtures, run `make check-rules`, and restart Prometheus with `docker compose restart prometheus`. The automated demo assumes the checked-in 0.30-core threshold and 60-second experiment. Short faults may end before the alert can fire.
 
+## Investigate an incident (read-only)
+
+```sh
+make investigate                                        # capture the last 120 s and diagnose
+uv run --frozen python -m agent.cli capture --lookback 180
+uv run --frozen python -m agent.cli diagnose artifacts/investigations/<id>-bundle.json
+```
+
+The investigator runs on the host and reads only the local Prometheus on a loopback address. It captures an **evidence bundle**: 21 allowlisted series (scrape health, request rate, latency percentiles, slow and error fractions, worker-call outcomes, process CPU and RSS) plus firing alert names. Each series' PromQL is fixed in [`agent/catalog.py`](agent/catalog.py); nothing accepts a query string. Fault markers, the network fault controller, toxic state, and scenario records are not in the catalogue, and tests check that their names cannot appear in a bundle.
+
+The deterministic baseline ([`agent/rules_baseline.py`](agent/rules_baseline.py)) uses the alert thresholds. It maps the last 30 seconds of evidence to `healthy`, `cpu_pressure`, `network_latency`, `network_connectivity_or_timeout`, `service_unavailable`, or `unknown_or_ambiguous`. It separates network delay from worker slowness by comparing the API's and the worker's own latency. It fails closed: missing, stale, sparse, or undefined data, no traffic, or conflicting signals give `unknown_or_ambiguous`, with the reason listed under `limitations`. Reports follow a versioned schema with cited evidence, user-facing impact, and an advisory recommendation. `action_taken` is always `false`, and nothing in the investigator can change containers, the proxy, or services.
+
+One overlap is documented rather than hidden. CPU pressure can delay requests before the worker's handler timer starts, so a slow API with a fast worker under high worker CPU is reported as `cpu_pressure` with a limitation saying network delay is not excluded.
+
 ## What the metrics mean
 
 | Metric | Meaning |

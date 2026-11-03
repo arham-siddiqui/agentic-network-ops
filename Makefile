@@ -1,5 +1,5 @@
 .PHONY: up down clean test lint check-rules load inject-cpu-fault stop-fault fault-status smoke demo \
-	inject-network-fault stop-network-fault network-fault-status network-demo
+	inject-network-fault stop-network-fault network-fault-status network-demo investigate
 
 DURATION ?= 60
 SCENARIO ?= latency
@@ -46,3 +46,6 @@ network-fault-status:
 	$(NETWORK_FAULT) status
 network-demo:
 	python3 scripts/demo.py --scenario $(SCENARIO)
+# Read-only: captures allowlisted telemetry from the local Prometheus and writes a report.
+investigate:
+	uv run --frozen python -m agent.cli investigate --lookback 120
