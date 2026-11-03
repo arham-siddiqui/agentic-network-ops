@@ -2,11 +2,12 @@
   "uid": "local-lab",
   "title": "Distributed services lab",
   "schemaVersion": 39,
-  "version": 1,
+  "version": 2,
   "editable": false,
   "tags": [
     "lab",
-    "stage-1"
+    "stage-1",
+    "network"
   ],
   "timezone": "browser",
   "refresh": "5s",
@@ -32,7 +33,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "up{job=~\"api|worker\"}",
+          "expr": "up{job=~\"api|worker|impairment-proxy\"}",
           "legendFormat": "{{job}}",
           "range": true
         }
@@ -347,7 +348,7 @@
     },
     {
       "id": 9,
-      "title": "CPU fault active (ground truth)",
+      "title": "Fault active (ground truth, not an alert input)",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
@@ -363,7 +364,13 @@
         {
           "refId": "A",
           "expr": "lab_cpu_fault_active{job=\"worker\"}",
-          "legendFormat": "fault active",
+          "legendFormat": "worker CPU fault",
+          "range": true
+        },
+        {
+          "refId": "B",
+          "expr": "lab_network_fault_active{job=\"network-fault-controller\"}",
+          "legendFormat": "network fault",
           "range": true
         }
       ],
@@ -409,6 +416,85 @@
       "fieldConfig": {
         "defaults": {
           "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 11,
+      "title": "Work responses slower than 250 ms (API high + worker low = delay between them)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 40,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "range": true,
+          "expr": "1 - sum by (job) (rate(lab_http_request_duration_seconds_bucket{route=\"/work\",le=\"0.25\"}[30s])) / sum by (job) (rate(lab_http_request_duration_seconds_count{route=\"/work\"}[30s]))",
+          "legendFormat": "{{job}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 12,
+      "title": "API-to-worker proxy bytes sent / second",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 40,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "range": true,
+          "expr": "sum by (direction) (rate(toxiproxy_proxy_sent_bytes_total{proxy=\"api_to_worker\"}[30s]))",
+          "legendFormat": "{{direction}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps",
           "min": 0
         },
         "overrides": []

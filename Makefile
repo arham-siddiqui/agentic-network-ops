@@ -1,6 +1,10 @@
-.PHONY: up down clean test lint check-rules load inject-cpu-fault stop-fault fault-status smoke demo
+.PHONY: up down clean test lint check-rules load inject-cpu-fault stop-fault fault-status smoke demo \
+	inject-network-fault stop-network-fault network-fault-status network-demo
 
 DURATION ?= 60
+SCENARIO ?= latency
+LATENCY_MS ?= 600
+NETWORK_FAULT = docker compose exec -T network-fault-controller python -m lab.network_fault_cli
 
 up:
 	docker compose up --build -d --wait
@@ -28,3 +32,17 @@ smoke:
 	docker compose run --rm smoke-test
 demo:
 	python3 scripts/demo.py
+# SCENARIO=latency (LATENCY_MS, default 600) or SCENARIO=timeout; both expire after DURATION.
+inject-network-fault:
+ifeq ($(SCENARIO),latency)
+	$(NETWORK_FAULT) start --scenario latency --duration $(DURATION) --latency-ms $(LATENCY_MS)
+else
+	$(NETWORK_FAULT) start --scenario $(SCENARIO) --duration $(DURATION)
+endif
+# Also clears toxics left behind by an interrupted run.
+stop-network-fault:
+	$(NETWORK_FAULT) stop
+network-fault-status:
+	$(NETWORK_FAULT) status
+network-demo:
+	python3 scripts/demo.py --scenario $(SCENARIO)

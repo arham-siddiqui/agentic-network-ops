@@ -37,21 +37,72 @@ services:
     volumes:
       - scenario-data:/var/lib/lab
 
+  # Transparent TCP proxy on the API->worker path; healthy mode adds no toxics. Its admin API
+  # binds only to the control-network alias, so api/worker (lab network only) cannot reach it.
+  impairment-proxy:
+    <<: *sandbox
+    image: ghcr.io/shopify/toxiproxy:2.13.0
+    user: "65534:65534"
+    cpus: 0.25
+    mem_limit: 64m
+    networks:
+      lab: {}
+      control:
+        aliases: [proxy-admin]
+    command:
+      - -host=proxy-admin
+      - -port=8474
+      - -config=/etc/toxiproxy/toxiproxy.json
+      - -proxy-metrics
+    volumes:
+      - ./network/toxiproxy.json:/etc/toxiproxy/toxiproxy.json:ro
+    healthcheck:
+      test: [CMD, /toxiproxy-cli, --host, http://proxy-admin:8474, list]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    depends_on:
+      worker:
+        condition: service_healthy
+
+  # Sole client of the proxy admin API: fixed toxics, 1-120 s expiry, local Unix-socket control.
+  network-fault-controller:
+    <<: *app
+    networks: [control]
+    cpus: 0.25
+    mem_limit: 96m
+    command: [python, -m, lab.network_fault]
+    volumes:
+      - network-scenario-data:/var/lib/lab
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9101/metrics', timeout=2).read()"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    depends_on:
+      impairment-proxy:
+        condition: service_healthy
+
   api:
     <<: *app
     environment:
       SERVICE: api
-      WORKER_URL: http://worker:8000
+      WORKER_URL: http://impairment-proxy:8000
     ports:
       - "127.0.0.1:${API_PORT:-8000}:8000"
     depends_on:
       worker:
+        condition: service_healthy
+      impairment-proxy:
         condition: service_healthy
 
   prometheus:
     <<: *sandbox
     image: prom/prometheus:v3.15.0
     user: "65534:65534"
+    networks: [lab, control]
     cpus: 0.5
     mem_limit: 256m
     command:
@@ -120,8 +171,12 @@ services:
 networks:
   lab:
     internal: true
+  # Fault-control plane: proxy admin API, network fault controller, and Prometheus scrapes.
+  control:
+    internal: true
 
 volumes:
   scenario-data:
+  network-scenario-data:
   prometheus-data:
   grafana-data:

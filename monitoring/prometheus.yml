@@ -11,3 +11,10 @@ scrape_configs:
   - job_name: worker
     static_configs:
       - targets: [worker:8000]
+  - job_name: impairment-proxy
+    static_configs:
+      - targets: [proxy-admin:8474]
+  # Ground-truth marker for dashboards and evaluation only; never a detection input.
+  - job_name: network-fault-controller
+    static_configs:
+      - targets: [network-fault-controller:9101]

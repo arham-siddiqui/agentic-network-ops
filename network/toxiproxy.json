@@ -1,0 +1,8 @@
+[
+  {
+    "name": "api_to_worker",
+    "listen": "0.0.0.0:8000",
+    "upstream": "worker:8000",
+    "enabled": true
+  }
+]

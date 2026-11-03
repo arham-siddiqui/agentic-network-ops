@@ -1,5 +1,22 @@
 # Validation record
 
+## 2026-11-03: network impairment slice (branch `feat/november-incident-diagnosis`)
+
+Run on macOS arm64 (12 CPUs, 24 GiB), CPython 3.12.13 via `uv`. **Docker is still not installed on this machine, so Milestone 0 (Compose startup, smoke test, CPU demo ×3) and all network-scenario runtime checks are blocked, not passed.**
+
+| Check | Observed result |
+| --- | --- |
+| `uv run --frozen pytest -q` before changes | 37 passed (same Starlette deprecation warning). |
+| `uv run --frozen pytest -q` after the network slice | 63 passed. New: network toxic bounds, fixed toxic definitions, apply/expiry/early-stop/idempotent stop, stale-toxic refusal and clearing, misconfigured and unreachable proxy, revert retry and `cleanup_failed`, startup reconcile, unknown request fields, a slow revert, and demo/alert-rule consistency. All run against an in-memory fake of the Toxiproxy admin API. |
+| `ruff check .` / `ruff format --check .` | Passed. |
+| YAML parse of `compose.yaml`, `monitoring/*.yml` | Parsed. Resolved service networks, users, read-only roots, dropped capabilities, and CPU/memory limits inspected for all eight services. This is not `docker compose config`. |
+| `promtool test rules` for the new `ApiHighLatency`, `WorkerCallTimeouts`, and `ImpairmentProxyUnavailable` fixtures | **Not executed.** promtool needs Docker (`make check-rules`) or a native binary; downloading one was not permitted in this session. Run `make check-rules` first once Docker is available. |
+| Toxiproxy behavior | **Not executed.** Admin endpoints, error codes, toxic semantics (`latency` holds each chunk; `timeout` with 0 drops data and keeps the connection open; removal closes affected links), the `-host`/`-proxy-metrics` flags, metric names and labels, and the scratch-based image contents were read from the v2.13.0 source and release configuration. |
+
+Remaining runtime checks for this slice, in order: `make check-rules`; `make up`; `make smoke`, which now also requires proxy and controller scrapes, traffic through the proxy in both directions, and the fault-control endpoints being *unreachable* from the lab network. Then `python3 scripts/demo.py --scenario latency --runs 3` and `--scenario timeout --runs 3`. Also check that the measured added latency per request roughly equals `LATENCY_MS` rather than a multiple of it, and record any 502s seen as the timeout toxic is removed.
+
+## 2026-10-09: initial Stage 1 checks
+
 Initial checks ran on 2026-10-09 on macOS arm64, using CPython 3.12.13. Docker was not installed. **Container startup, Grafana runtime behavior, and the actual CPU-pressure demonstration remain unverified.** Stage 1 acceptance is pending those checks; the presence of working code and synthetic tests does not establish successful container experiments.
 
 ## Executed checks
