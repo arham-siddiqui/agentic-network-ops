@@ -1,6 +1,6 @@
 .PHONY: up down clean test lint check-rules load inject-cpu-fault stop-fault fault-status smoke demo \
 	inject-network-fault stop-network-fault network-fault-status network-demo investigate \
-	evaluate evaluate-score live-demo integration telemetry
+	evaluate evaluate-score live-demo integration telemetry worker-outage
 
 DURATION ?= 60
 SCENARIO ?= latency
@@ -40,6 +40,9 @@ ifeq ($(SCENARIO),latency)
 else
 	$(NETWORK_FAULT) start --scenario $(SCENARIO) --duration $(DURATION)
 endif
+# Stops the worker container for DURATION seconds, then always restarts it (Ctrl-C restarts early).
+worker-outage:
+	python3 scripts/worker_outage.py --duration $(DURATION)
 # Also clears toxics left behind by an interrupted run.
 stop-network-fault:
 	$(NETWORK_FAULT) stop

@@ -53,7 +53,7 @@
               <button class="btn stop" id="stop-fault" disabled>Stop fault</button>
               <span class="error-msg" id="fault-error"></span>
             </div>
-            <p class="note">The real lab takes faults only from the terminal (<code>make inject-network-fault</code>, <code>make inject-cpu-fault</code>) over Unix sockets. There is no HTTP fault endpoint, and the investigator has no fault tools.</p>
+            <p class="note">The real lab takes faults only from the terminal (<code>make inject-network-fault</code>, <code>make inject-cpu-fault</code> over Unix sockets; <code>make worker-outage</code> stops and restarts the worker container). There is no HTTP fault endpoint, and the investigator has no fault tools.</p>
           </div>
 
           <div id="rec-controls" class="controls" hidden>
@@ -81,6 +81,7 @@
 make inject-network-fault LATENCY_MS=900
 make inject-network-fault SCENARIO=timeout
 make inject-cpu-fault
+make worker-outage DURATION=30             # stops, then restarts the worker
 make network-fault-status
 make stop-network-fault
 make investigate                          # real investigator report</code></pre>

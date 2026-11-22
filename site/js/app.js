@@ -177,7 +177,7 @@ for (const b of document.querySelectorAll("[data-rec-speed]")) {
 }
 
 // ---------- simulation controls ----------
-const simOnly = new Set(["worker_down", "proxy_down"]);
+const simOnly = new Set(["proxy_down"]); // worker_down is real: make worker-outage
 const FAULT_SUB = {
   latency: () => `+${$("p-latency").value} ms on worker→API responses`,
   timeout: () => "proxy drops API→worker bytes → 504 at 2 s",
