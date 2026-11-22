@@ -1,6 +1,6 @@
 .PHONY: up down clean test lint check-rules load inject-cpu-fault stop-fault fault-status smoke demo \
 	inject-network-fault stop-network-fault network-fault-status network-demo investigate \
-	evaluate evaluate-score
+	evaluate evaluate-score live-demo
 
 DURATION ?= 60
 SCENARIO ?= latency
@@ -61,3 +61,6 @@ ifdef MODES
 else
 	uv run --frozen python -m evaluation.run score $(RUN)
 endif
+# Demo site with a read-only live view of the running lab (http://127.0.0.1:8088).
+live-demo:
+	python3 -m scripts.live_bridge

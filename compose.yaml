@@ -126,7 +126,8 @@ services:
     # made thread creation fail ("fatal error: newosproc") on first Docker run.
     pids_limit: 512
     cpus: 0.5
-    mem_limit: 256m
+    # Observed ~227 MiB right after startup and a smoke test; 256 MiB left no headroom.
+    mem_limit: 384m
     environment:
       GF_SECURITY_ADMIN_USER: admin
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-local-lab-only}

@@ -23,7 +23,7 @@ This is a local development lab. The threat model covers what the lab and its re
 | Surface | Control |
 | --- | --- |
 | Containers | Non-root users, `cap_drop: ALL`, `no-new-privileges`, read-only root filesystems, size-limited tmpfs, CPU/memory/PID limits. No privileged mode, Docker socket mounts, or host networking. Configuration is mounted read-only. |
-| Networks | Both Compose networks are `internal: true`. Published ports bind to `127.0.0.1` only. The proxy admin API binds to its `control` network alias. The API, worker, load generator, and smoke test are on `lab` only, and the smoke test checks from `lab` that the admin API and network controller are unreachable. |
+| Networks | `lab` and `control` are `internal: true`. Published ports bind to `127.0.0.1` only. They are carried by an `edge` bridge (API, Prometheus, Grafana only) with IP masquerading disabled, so containers have no outbound NAT; outbound requests were observed to fail from each service. The proxy admin API binds to its `control` network alias. The API, worker, load generator, and smoke test are on `lab` only, and the smoke test checks from `lab` that the admin API and network controller are unreachable. |
 | Fault controls | Reachable only through `docker compose exec` and `0600` Unix sockets, with no HTTP control endpoint. Parameters are validated and bounded (1–120 s; latency ≤ 1,500 ms). Fixed proxy, upstream, and toxic definitions; unknown request fields are rejected. One fault at a time; automatic expiry; cleanup in `finally`; stale-toxic reconcile. |
 | Investigator data access | Host-side, loopback-only Prometheus. Only catalogue metric IDs exist, with server-defined PromQL; there is no method that accepts a query string. Bounded lookback, step, point counts, and HTTP timeouts. Missing data stays explicitly missing. |
 | Investigator tools | Nine `get_*` tools, all reads over the already-captured bundle. No shell, Docker, restart, firewall, routing, or fault tools exist. Tool arguments are validated, and invalid or unknown calls return an error result. The budgets are 6 calls, 30 s, and 60,000 tokens. |
@@ -36,6 +36,7 @@ This is a local development lab. The threat model covers what the lab and its re
 - **Segmentation is not authentication.** Prometheus and the network controller share the `control` network with the proxy admin API, and anything able to join that network or exec into those containers can reach it. Toxiproxy's optional `TOXIPROXY_AUTH_TOKEN` would add authentication; it is not enabled.
 - **Anyone with Docker access owns the lab.** The Unix sockets and `docker compose exec` boundaries assume a trusted local operator.
 - **Prompt injection is mitigated, not eliminated.** A model might still be misled into a wrong diagnosis. It cannot act on that, because no tool changes anything, and wrong cited values are flagged against telemetry.
+- **Disabled masquerade is not a firewall.** It removes outbound NAT on the `edge` bridge, but it filters nothing. A host or VM with unusual routing could still forward container traffic.
 - **The Grafana password is a documented lab default**, not a secret.
 - **Image tags are not digests.** Upstream could republish a tag.
 - **Hosted model calls send telemetry summaries off the machine.** They contain lab metrics only: no addresses, user data, or credentials.
