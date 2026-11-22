@@ -195,3 +195,10 @@ def test_export_for_site_contains_only_captured_measurements(bundle_for, tmp_pat
     latency = next(i for i in data["incidents"] if i["scenario"] == "latency")
     assert latency["reports"]["rules"]["predicted_cause"] == "network_latency"
     assert latency["ground_truth"]["started_at"] and latency["bundle"]["series"]
+
+
+def test_settings_keep_evidence_windows_inside_the_trial():
+    settings = evaluation.Settings()
+    assert settings.baseline_seconds + settings.decision_delay_seconds > settings.lookback_seconds
+    with pytest.raises(ValueError, match="before this trial"):
+        evaluation.Settings(baseline_seconds=30)

@@ -39,13 +39,21 @@ MODES = ("rules", "llm_snapshot", "llm_tools")
 
 @dataclass(frozen=True)
 class Settings:
-    baseline_seconds: int = 30
+    # The evidence window (lookback) must start after this trial's load began; the first real
+    # run used a 30 s baseline, so windows reached ~50 s back into the previous trial's fault.
+    baseline_seconds: int = 85
     decision_delay_seconds: int = 40  # after injection; same offset for healthy controls
     lookback_seconds: int = 120
-    load_seconds: int = 180
+    load_seconds: int = 240
     cooldown_seconds: int = 15
     expiry_timeout_seconds: int = 90
     recovery_timeout_seconds: int = 60
+
+    def __post_init__(self):
+        if self.baseline_seconds + self.decision_delay_seconds <= self.lookback_seconds:
+            raise ValueError("evidence window would include time before this trial's load")
+        if self.load_seconds < self.baseline_seconds + self.decision_delay_seconds + 80:
+            raise ValueError("load must outlast the fault and the recovery check")
 
 
 def _now() -> str:

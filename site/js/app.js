@@ -132,6 +132,7 @@ function openRecorded(flatIndex) {
   const options = recordedOptions();
   const pick = options[flatIndex] ?? options[0];
   const rec = new RecordedSource(pick.file.data, pick.index, CONFIG);
+  $("rec-select").value = String(options.indexOf(pick)); // keep the selector in step with deep links
   recPlaying = true;
   $("rec-play").textContent = "Pause";
   setMode("recorded", rec);
@@ -141,7 +142,8 @@ function openRecorded(flatIndex) {
   $("rec-truth").className = "active-fault";
   $("rec-truth").textContent = `ground truth: ${inc.scenario} → label ${inc.label}${params ? ` (${params})` : ""}`;
   const lab = pick.file.data.lab ?? {};
-  $("rec-meta").textContent = `File ${pick.file.name} · captured ${pick.file.data.captured_on ?? "?"}${lab.docker_version ? ` · Docker ${lab.docker_version}` : ""}`;
+  const docker = lab.docker_version ?? lab.environment?.docker_version;
+  $("rec-meta").textContent = `File ${pick.file.name} · captured ${pick.file.data.captured_on ?? "?"}${docker ? ` · Docker ${docker}` : ""}`;
 }
 function recordedOptions() {
   const out = [];
