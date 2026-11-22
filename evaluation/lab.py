@@ -16,13 +16,13 @@ from scripts.demo import (
     NETWORK_CONTROL,
     ROOT,
     SCENARIOS,
+    WORKER_OUTAGE,
     command,
-    control,
     measure,
     query,
 )
 
-CHANNELS = {"cpu": CPU_CONTROL, "network": NETWORK_CONTROL}
+CHANNELS = {"cpu": CPU_CONTROL, "network": NETWORK_CONTROL, "worker_outage": WORKER_OUTAGE}
 
 
 class ComposeLab:
@@ -32,7 +32,7 @@ class ComposeLab:
         self.sleep = time.sleep
 
     def faults_active(self) -> bool:
-        return any(control(channel, "status")["active"] for channel in CHANNELS.values())
+        return any(channel.active() for channel in CHANNELS.values())
 
     def idle(self) -> bool:
         """Both services scraped, no fault active, and no alert firing."""
@@ -64,18 +64,16 @@ class ComposeLab:
             process.wait(timeout=15)
 
     def inject(self, scenario) -> dict:
-        return control(CHANNELS[scenario.control], "start", *scenario.start_args)["run"]
+        return CHANNELS[scenario.control].start(*scenario.start_args)
 
     def stop(self, scenario) -> None:
-        control(CHANNELS[scenario.control], "stop")
+        CHANNELS[scenario.control].stop()
 
     def active(self, scenario) -> bool:
-        return control(CHANNELS[scenario.control], "status")["active"]
+        return CHANNELS[scenario.control].active()
 
     def events(self, scenario, run_id: str) -> list[dict]:
-        service, _, path = CHANNELS[scenario.control]
-        lines = command("exec", "-T", service, "cat", path).splitlines()
-        return [e for e in map(json.loads, lines) if e.get("run_id") == run_id]
+        return CHANNELS[scenario.control].events(run_id)
 
     def recovered(self, scenario) -> bool:
         if scenario.demo is not None:

@@ -22,7 +22,7 @@ def test_catalogue_never_queries_ground_truth():
 
 def test_source_has_no_arbitrary_query_method():
     public = {name for name in dir(PrometheusSource) if not name.startswith("_")}
-    assert public == {"metric", "alerts"}
+    assert public == {"metric", "alerts", "active_alerts"}
     with pytest.raises(KeyError):
         PrometheusSource().metric('lab_cpu_fault_active{job="worker"}', 0, 1, 1)
 

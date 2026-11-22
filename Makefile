@@ -1,6 +1,6 @@
 .PHONY: up down clean test lint check-rules load inject-cpu-fault stop-fault fault-status smoke demo \
 	inject-network-fault stop-network-fault network-fault-status network-demo investigate \
-	evaluate evaluate-score live-demo
+	evaluate evaluate-score live-demo integration telemetry
 
 DURATION ?= 60
 SCENARIO ?= latency
@@ -64,3 +64,13 @@ endif
 # Demo site with a read-only live view of the running lab (http://127.0.0.1:8088).
 live-demo:
 	python3 -m scripts.live_bridge
+# Read-only tool checks against the running lab (generates 30 /work requests first).
+integration:
+	LAB_INTEGRATION=1 uv run --frozen pytest -q tests/test_tools_integration.py
+# Inspect telemetry the way a future agent will: make telemetry SERVICE=worker WINDOW=300
+SERVICE ?= worker
+WINDOW ?= 300
+telemetry:
+	uv run --frozen python -m agent.tools metrics $(SERVICE) --window $(WINDOW)
+	uv run --frozen python -m agent.tools logs $(SERVICE) --window $(WINDOW) --limit 10
+	uv run --frozen python -m agent.tools alerts

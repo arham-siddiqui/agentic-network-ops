@@ -46,6 +46,16 @@ SCENARIOS = {
             {"duration_s": 60},
             "timeout",
         ),
+        # The worker container is stopped and restarted by scripts/worker_outage.py.
+        Scenario(
+            "worker_down",
+            "service_unavailable",
+            "worker_outage",
+            ("--duration", "60"),
+            "ServiceUnavailable",
+            {"duration_s": 60},
+            "worker_down",
+        ),
     )
 }
-DEFAULT_SCENARIOS = ("healthy", "cpu", "latency", "timeout")
+DEFAULT_SCENARIOS = ("healthy", "cpu", "latency", "timeout", "worker_down")

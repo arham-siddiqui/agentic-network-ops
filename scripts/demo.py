@@ -1,4 +1,4 @@
-"""Host-side bounded Compose experiment (CPU, network latency, or network timeout).
+"""Host-side bounded Compose experiment (CPU, network latency/timeout, or worker outage).
 
 Uses only Python's standard library.
 """
@@ -6,7 +6,9 @@ Uses only Python's standard library.
 import argparse
 import json
 import math
+import signal
 import subprocess
+import sys
 import time
 import uuid
 from datetime import UTC, datetime
@@ -26,12 +28,80 @@ def command(*args, timeout=90):
     return result.stdout
 
 
-CPU_CONTROL = ("worker", "lab.fault_cli", "/var/lib/lab/scenarios.jsonl")
-NETWORK_CONTROL = (
-    "network-fault-controller",
-    "lab.network_fault_cli",
-    "/var/lib/lab/network-scenarios.jsonl",
+class ExecChannel:
+    """A fault controller inside a container, reached with `docker compose exec`."""
+
+    def __init__(self, service, module, record_path):
+        self.service, self.module, self.record_path = service, module, record_path
+
+    def call(self, action, *args):
+        output = command("exec", "-T", self.service, "python", "-m", self.module, action, *args)
+        result = json.loads(output)
+        if not result["ok"]:
+            raise RuntimeError(result)
+        return result
+
+    def start(self, *args):
+        return self.call("start", *args)["run"]
+
+    def status(self):
+        return self.call("status")
+
+    def active(self):
+        return self.status()["active"]
+
+    def stop(self):
+        self.call("stop")
+
+    def events(self, run_id):
+        lines = command("exec", "-T", self.service, "cat", self.record_path).splitlines()
+        return [e for e in map(json.loads, lines) if e.get("run_id") == run_id]
+
+
+class WorkerOutage:
+    """Runs scripts/worker_outage.py, which stops the worker and always restarts it."""
+
+    record_path = ROOT / "artifacts" / "worker-outages.jsonl"
+
+    def __init__(self):
+        self.process = None
+
+    def start(self, *args):
+        self.process = subprocess.Popen(
+            [sys.executable, str(ROOT / "scripts" / "worker_outage.py"), *args],
+            cwd=ROOT,
+            stdout=subprocess.PIPE,
+            text=True,
+        )
+        line = self.process.stdout.readline()
+        if not line:
+            self.process.wait(timeout=90)
+            raise RuntimeError("worker outage did not start")
+        return json.loads(line)
+
+    def status(self):
+        return {"active": self.active()}
+
+    def active(self):
+        return self.process is not None and self.process.poll() is None
+
+    def stop(self):
+        if self.active():
+            self.process.send_signal(signal.SIGTERM)  # the script restarts the worker
+            self.process.wait(timeout=90)
+
+    def events(self, run_id):
+        if not self.record_path.exists():
+            return []
+        lines = self.record_path.read_text().splitlines()
+        return [e for e in map(json.loads, lines) if e.get("run_id") == run_id]
+
+
+CPU_CONTROL = ExecChannel("worker", "lab.fault_cli", "/var/lib/lab/scenarios.jsonl")
+NETWORK_CONTROL = ExecChannel(
+    "network-fault-controller", "lab.network_fault_cli", "/var/lib/lab/network-scenarios.jsonl"
 )
+WORKER_OUTAGE = WorkerOutage()
 SLOW_FRACTION = (
     '1 - sum(rate(lab_http_request_duration_seconds_bucket{job="api",route="/work",le="0.25"}'
     '[30s])) / sum(rate(lab_http_request_duration_seconds_count{job="api",route="/work"}[30s]))'
@@ -67,6 +137,15 @@ SCENARIOS = {
         "threshold": 0.20,
         "load_seconds": 180,
     },
+    # The worker container is stopped; Prometheus scrapes fail and the API returns 502.
+    "worker_down": {
+        "control": WORKER_OUTAGE,
+        "start": ("--duration", "60"),
+        "alert": "ServiceUnavailable",
+        "signal": '1 - up{job="worker"}',
+        "threshold": 0.5,
+        "load_seconds": 180,
+    },
 }
 # User-facing impact recorded alongside every sample; never used to decide pass/fail.
 IMPACT = {
@@ -75,19 +154,10 @@ IMPACT = {
     "worker_p95_seconds": "histogram_quantile(0.95, sum by (le) "
     '(rate(lab_http_request_duration_seconds_bucket{job="worker",route="/work"}[30s])))',
     "api_error_fraction": '(sum(rate(lab_http_requests_total{job="api",route="/work",status=~"5.."}'
-    '[30s])) or on () vector(0)) '
+    "[30s])) or on () vector(0)) "
     '/ clamp_min(sum(rate(lab_http_requests_total{job="api",route="/work"}[30s])), 0.1)',
     "worker_cpu_cores": 'rate(process_cpu_seconds_total{job="worker"}[15s])',
 }
-
-
-def control(channel, action, *args):
-    service, module, _ = channel
-    output = command("exec", "-T", service, "python", "-m", module, action, *args)
-    result = json.loads(output)
-    if not result["ok"]:
-        raise RuntimeError(result)
-    return result
 
 
 def query(base, expression):
@@ -141,7 +211,7 @@ def one_run(base, artifact_dir, scenario="cpu"):
     }
     load = None
     owns_fault = False
-    if control(CPU_CONTROL, "status")["active"] or control(NETWORK_CONTROL, "status")["active"]:
+    if CPU_CONTROL.active() or NETWORK_CONTROL.active():
         raise RuntimeError("An existing fault is active; wait or stop it before the demo")
     log_path = artifact_dir / f"{run_key}-load.log"
     load_seconds = spec["load_seconds"]
@@ -170,7 +240,7 @@ def one_run(base, artifact_dir, scenario="cpu"):
                 )
             report["baseline_signal"] = baseline
             report["baseline_impact"] = impact(base)
-            report["fault"] = control(channel, "start", *spec["start"])["run"]
+            report["fault"] = channel.start(*spec["start"])
             owns_fault = True
             fault_started = time.monotonic()
 
@@ -191,7 +261,7 @@ def one_run(base, artifact_dir, scenario="cpu"):
             if max(x["value"] for x in report["signal_samples"]) <= threshold:
                 raise RuntimeError("Alert fired without an observed signal increase")
             print(f"{run_key}: alert fired; waiting for automatic fault expiry", flush=True)
-            wait_for(lambda: not control(channel, "status")["active"], 80, "automatic expiry")
+            wait_for(lambda: not channel.active(), 80, "automatic expiry")
             ended = time.monotonic()
 
             def recovered():
@@ -205,14 +275,9 @@ def one_run(base, artifact_dir, scenario="cpu"):
             report["observed_recovery_seconds"] = time.monotonic() - ended
             report["recovery_signal"] = measure(base, spec["signal"])
             report["recovery_impact"] = impact(base)
-            if channel is NETWORK_CONTROL and control(channel, "status").get("proxy_toxics"):
+            if channel is NETWORK_CONTROL and channel.status().get("proxy_toxics"):
                 raise RuntimeError("Proxy still has toxics after expiry")
-            events = command("exec", "-T", channel[0], "cat", channel[2])
-            report["ground_truth"] = [
-                event
-                for event in map(json.loads, events.splitlines())
-                if event.get("run_id") == report["fault"]["run_id"]
-            ]
+            report["ground_truth"] = channel.events(report["fault"]["run_id"])
             if not any(e.get("reason") == "duration_elapsed" for e in report["ground_truth"]):
                 raise RuntimeError("Missing ground-truth automatic expiry record")
             if load.wait(timeout=load_seconds + 10) != 0:
@@ -225,7 +290,7 @@ def one_run(base, artifact_dir, scenario="cpu"):
     finally:
         if owns_fault:
             try:
-                control(channel, "stop")
+                channel.stop()
             except (OSError, subprocess.SubprocessError, ValueError, RuntimeError) as exc:
                 report.setdefault("cleanup_errors", []).append(str(exc))
         if load is not None and load.poll() is None:

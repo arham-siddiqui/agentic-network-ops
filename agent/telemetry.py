@@ -63,6 +63,20 @@ class PrometheusSource:
     def alerts(self, start: float, end: float, step: float) -> list[dict]:
         return self._range(ALERTS_QUERY, start, end, step)
 
+    def active_alerts(self) -> list[dict]:
+        """Current firing and pending alerts from Prometheus's alerts API (no query input)."""
+        try:
+            response = self.client.get("/api/v1/alerts")
+            response.raise_for_status()
+            data = response.json()
+        except (httpx.HTTPError, ValueError) as exc:
+            raise PrometheusUnavailable(f"Prometheus alerts request failed: {exc}") from exc
+        if data.get("status") != "success" or not isinstance(
+            data.get("data", {}).get("alerts"), list
+        ):
+            raise PrometheusUnavailable("Prometheus returned an unexpected response")
+        return data["data"]["alerts"]
+
 
 def _points(values: list) -> list[tuple[float, float | None]]:
     points = []
@@ -115,6 +129,7 @@ def capture(
     lookback_seconds: int = 120,
     step: float = DEFAULT_STEP,
     incident_id: str | None = None,
+    metric_ids: tuple[str, ...] | None = None,
 ) -> EvidenceBundle:
     if not MIN_LOOKBACK <= lookback_seconds <= MAX_LOOKBACK:
         raise ValueError(f"lookback must be {MIN_LOOKBACK}-{MAX_LOOKBACK} seconds")
@@ -122,7 +137,9 @@ def capture(
     start = end - timedelta(seconds=lookback_seconds)
     s, e = start.timestamp(), end.timestamp()
     series = {}
-    for metric_id in METRICS:
+    for metric_id in metric_ids or tuple(METRICS):
+        if metric_id not in METRICS:
+            raise ValueError(f"unknown metric: {metric_id}")
         try:
             series[metric_id] = _series(metric_id, source.metric(metric_id, s, e, step), e, step)
         except PrometheusUnavailable as exc:
