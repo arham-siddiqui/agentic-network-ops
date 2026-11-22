@@ -96,6 +96,7 @@ def run_trial(lab, scenario, run_dir: Path, settings: Settings) -> dict:
         "incident_id": incident_id,
         "scenario": scenario.name,
         "label": scenario.label,
+        "affected_service": scenario.affected,
         "params": scenario.params,
         "status": "failed",
         "started_at": _now(),
@@ -219,6 +220,7 @@ def records(run_dir: Path) -> list[dict]:
                 "incident_id": trial["incident_id"],
                 "scenario": trial["scenario"],
                 "label": trial["label"],
+                "expected_affected": trial.get("affected_service"),
                 "status": trial["status"],
                 "mode": mode_dir.name,
                 "predicted": None,
@@ -234,6 +236,7 @@ def records(run_dir: Path) -> list[dict]:
                 problems |= set(info.get("citation_problems", []))
                 row.update(
                     predicted=report.predicted_cause,
+                    predicted_affected=report.affected_service,
                     evidence_count=len(report.evidence),
                     citation_problems=sorted(problems),
                     latency_s=info.get("latency_seconds"),

@@ -40,6 +40,44 @@ ACTIONS = {
 }
 
 
+AFFECTED = {
+    "healthy": "none",
+    "cpu_pressure": "worker",
+    "network_latency": "api_worker_path",
+    "network_connectivity_or_timeout": "api_worker_path",
+    "service_unavailable": "unknown",
+    "unknown_or_ambiguous": "unknown",
+}
+# Read-only follow-ups phrased with the agent.tools functions a future investigator will have.
+NEXT_STEPS = {
+    "healthy": ("Keep monitoring; investigate again if an alert fires.",),
+    "cpu_pressure": (
+        "get_service_metrics('worker', 900): when did CPU rise, and did request rate rise with it?",
+        "get_service_logs('worker', 300): compare request volume and durations with the CPU rise.",
+        "get_active_alerts(): confirm WorkerCpuPressure and look for user-facing latency alerts.",
+    ),
+    "network_latency": (
+        "get_service_metrics('api', 300) and ('worker', 300): compare latency over time.",
+        "get_service_logs('api', 300): slow API responses with fast worker-side durations?",
+        "get_service_metrics('proxy', 300): check the API-to-worker proxy's scrape health.",
+    ),
+    "network_connectivity_or_timeout": (
+        "get_service_logs('api', 300): count 502 vs 504 responses and when they started.",
+        "get_service_metrics('worker', 300): is the worker still receiving requests?",
+        "get_service_metrics('proxy', 300): is the API-to-worker proxy up?",
+    ),
+    "service_unavailable": (
+        "get_service_logs(<component>, 300): look for shutdown or startup lifecycle events.",
+        "get_active_alerts(): confirm ServiceUnavailable clears before closing the incident.",
+    ),
+    "unknown_or_ambiguous": (
+        "Gather the missing or conflicting evidence listed under limitations.",
+        "Escalate to a human operator.",
+    ),
+}
+DOWN_SERVICE = {"API": "api", "worker": "worker", "proxy": "proxy"}
+
+
 def _fraction(value: float | None) -> str:
     return "unknown" if value is None else f"{value:.0%}"
 
@@ -47,6 +85,11 @@ def _fraction(value: float | None) -> str:
 def diagnose(bundle: EvidenceBundle) -> IncidentReport:
     s = {metric_id: summarize(bundle, metric_id) for metric_id in bundle.series}
     report = ReportBuilder(bundle, "rules", s)
+
+    def done(cause: str, summary: str, affected: str | None = None) -> IncidentReport:
+        return report.finish(
+            cause, summary, ACTIONS, affected or AFFECTED[cause], NEXT_STEPS[cause]
+        )
 
     def mean(metric_id: str) -> float | None:
         return s[metric_id].recent_mean
@@ -62,13 +105,13 @@ def diagnose(bundle: EvidenceBundle) -> IncidentReport:
 
     if all(series.status == "unavailable" for series in bundle.series.values()):
         report.limit("Prometheus was unavailable; no telemetry could be read.")
-        return report.finish("unknown_or_ambiguous", "No telemetry available.", ACTIONS)
+        return done("unknown_or_ambiguous", "No telemetry available.")
 
     required = ("api.up", "worker.up", "proxy.up", "api.request_rate")
     missing = [metric_id for metric_id in required if not s[metric_id].usable]
     if missing:
         report.limit(f"Required evidence missing or stale: {', '.join(missing)}.")
-        return report.finish("unknown_or_ambiguous", "Core health evidence is missing.", ACTIONS)
+        return done("unknown_or_ambiguous", "Core health evidence is missing.")
 
     down = [
         name
@@ -76,15 +119,15 @@ def diagnose(bundle: EvidenceBundle) -> IncidentReport:
         if report.cite(metric_id) < DOWN_BELOW
     ]
     if down:
-        return report.finish(
+        return done(
             "service_unavailable",
             f"Metrics scrapes are failing for: {', '.join(down)}.",
-            ACTIONS,
+            DOWN_SERVICE[down[0]],
         )
 
     if report.cite("api.request_rate") < MIN_TRAFFIC:
         report.limit("Too little /work traffic in the last 30 s to judge latency or errors.")
-        return report.finish("unknown_or_ambiguous", "Insufficient traffic to assess.", ACTIONS)
+        return done("unknown_or_ambiguous", "Insufficient traffic to assess.")
 
     calls = {
         outcome: mean(f"api.worker_calls.{outcome}") or 0.0
@@ -107,21 +150,19 @@ def diagnose(bundle: EvidenceBundle) -> IncidentReport:
             report.cite("worker.request_rate")
         if cpu_high:
             report.limit("Worker CPU pressure is also present; it could cause the failures.")
-            return report.finish(
+            return done(
                 "unknown_or_ambiguous",
                 f"API calls to the worker are {kind} while worker CPU is high.",
-                ACTIONS,
             )
-        return report.finish(
+        return done(
             "network_connectivity_or_timeout",
             f"{max(timeout_share, error_share):.0%} of API calls to the worker are {kind} while "
             "every component's metrics endpoint is up.",
-            ACTIONS,
         )
 
     if worker_cpu is None:
         report.limit("Worker CPU is unavailable, so CPU pressure cannot be ruled in or out.")
-        return report.finish("unknown_or_ambiguous", "Worker CPU evidence is missing.", ACTIONS)
+        return done("unknown_or_ambiguous", "Worker CPU evidence is missing.")
 
     if cpu_high:
         if api_slow is not None:
@@ -133,15 +174,14 @@ def diagnose(bundle: EvidenceBundle) -> IncidentReport:
                 "The API is slow while worker-side latency is normal. CPU queueing before the "
                 "worker's handler and path delay look alike here; network delay is not excluded."
             )
-        return report.finish(
+        return done(
             "cpu_pressure",
             f"Worker process is using {worker_cpu:.2f} cores against a 0.5-core quota.",
-            ACTIONS,
         )
 
     if api_slow is None:
         report.limit("API latency is undefined (no histogram observations in the last 30 s).")
-        return report.finish("unknown_or_ambiguous", "API latency evidence is missing.", ACTIONS)
+        return done("unknown_or_ambiguous", "API latency evidence is missing.")
     report.cite("api.slow_fraction")
 
     if api_slow >= SLOW_FRACTION:
@@ -149,26 +189,22 @@ def diagnose(bundle: EvidenceBundle) -> IncidentReport:
         worker_slow = mean("worker.slow_fraction")
         if worker_slow is None:
             report.limit("Worker-side latency is unavailable, so the delay cannot be located.")
-            return report.finish("unknown_or_ambiguous", "API responses are slow.", ACTIONS)
+            return done("unknown_or_ambiguous", "API responses are slow.")
         report.cite("worker.slow_fraction")
         if s["worker.latency_p95"].usable:
             report.cite("worker.latency_p95")
         if worker_slow >= SLOW_FRACTION:
             report.limit("The worker itself is slow with normal CPU; not a modeled cause.")
-            return report.finish(
-                "unknown_or_ambiguous", "Both API and worker responses are slow.", ACTIONS
-            )
-        return report.finish(
+            return done("unknown_or_ambiguous", "Both API and worker responses are slow.")
+        return done(
             "network_latency",
             f"{api_slow:.0%} of API responses exceed 250 ms while only {worker_slow:.0%} of "
             "worker-side responses do, so the delay is between the API and the worker.",
-            ACTIONS,
         )
 
     if s["api.error_fraction"].usable:
         report.cite("api.error_fraction")
-    return report.finish(
+    return done(
         "healthy",
         "All components are up; latency, errors, and worker CPU are within alert thresholds.",
-        ACTIONS,
     )

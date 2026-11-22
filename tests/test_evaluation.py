@@ -17,6 +17,10 @@ TELEMETRY = {
     "cpu_pressure": (CPU, [firing("WorkerCpuPressure")]),
     "network_latency": (LATENCY, [firing("ApiHighLatency")]),
     "network_connectivity_or_timeout": (TIMEOUT, [firing("WorkerCallTimeouts")]),
+    "service_unavailable": (
+        {"worker.up": 0, "api.worker_calls.success": 0.0, "api.worker_calls.error": 9.8},
+        [firing("ServiceUnavailable", "critical")],
+    ),
 }
 LABELS = ("cpu_pressure", "network_latency", "network_connectivity_or_timeout", '"healthy"')
 
@@ -94,6 +98,7 @@ def test_end_to_end_trials_with_rules(bundle_for, tmp_path):
     assert (rules["n_trials"], rules["n_fault"], rules["correct"]) == (8, 6, 6)
     assert (rules["n_healthy"], rules["false_incidents"], rules["n_failed_trials"]) == (2, 0, 0)
     assert rules["evidence_supported"] == 8
+    assert rules["affected_service_correct"] == rules["affected_service_scored"] == 8
     latency = next(t for t in trials if t["scenario"] == "latency")
     assert latency["alert_detection_delay_s"] == pytest.approx(20)
     assert latency["ground_truth_events"][0]["reason"] == "duration_elapsed"
@@ -202,3 +207,13 @@ def test_settings_keep_evidence_windows_inside_the_trial():
     assert settings.baseline_seconds + settings.decision_delay_seconds > settings.lookback_seconds
     with pytest.raises(ValueError, match="before this trial"):
         evaluation.Settings(baseline_seconds=30)
+
+
+def test_worker_outage_scenario_is_scored(bundle_for, tmp_path):
+    trials = evaluation.run_trials(
+        FakeLab(bundle_for), ["worker_down", "healthy"], 1, 7, tmp_path, evaluation.Settings()
+    )
+    evaluation.diagnose_bundles(tmp_path / "bundles", tmp_path / "predictions", ["rules"])
+    rules = evaluation.score_run(tmp_path)["rules"]
+    assert {t["scenario"] for t in trials} == {"worker_down", "healthy"}
+    assert rules["correct"] == 1 and rules["affected_service_correct"] == 2

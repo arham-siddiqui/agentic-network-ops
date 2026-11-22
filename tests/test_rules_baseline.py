@@ -120,7 +120,8 @@ def test_tampered_or_invented_evidence_is_detected(bundle_for):
 def test_report_round_trips_as_json(bundle_for):
     report = diagnose(bundle_for(LATENCY))
     data = json.loads(report.model_dump_json())
-    assert data["schema_version"] == "1" and data["predicted_cause"] == "network_latency"
+    assert data["schema_version"] == "1.1" and data["predicted_cause"] == "network_latency"
+    assert data["affected_service"] == "api_worker_path" and data["next_steps"]
     assert data["action_taken"] is False
 
 
@@ -135,3 +136,40 @@ def test_cli_rediagnoses_a_saved_bundle(bundle_for, tmp_path, monkeypatch, capsy
     saved = json.loads((tmp_path / f"{bundle.incident_id}-report-rules.json").read_text())
     assert saved["predicted_cause"] == "network_latency"
     assert "[rules] network_latency" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("overrides", "affected"),
+    [
+        ({}, "none"),
+        (CPU, "worker"),
+        (LATENCY, "api_worker_path"),
+        (TIMEOUT, "api_worker_path"),
+        ({"worker.up": 0, "api.worker_calls.error": 9.8}, "worker"),
+        ({"proxy.up": 0}, "proxy"),
+        ({"api.up": "absent"}, "unknown"),
+    ],
+)
+def test_reports_name_affected_service_and_read_only_next_steps(bundle_for, overrides, affected):
+    report = diagnose(bundle_for(overrides))
+    assert report.affected_service == affected
+    assert report.next_steps
+    for step in report.next_steps:
+        assert not any(word in step.lower() for word in ("restart", "stop", "inject", "kill"))
+
+
+def test_v1_reports_still_validate():
+    from agent.schemas import IncidentReport
+
+    old = {
+        "schema_version": "1",
+        "incident_id": "0123456789abcdef",
+        "mode": "rules",
+        "time_window_utc": {"start": "2026-11-21T00:00:00Z", "end": "2026-11-21T00:02:00Z"},
+        "predicted_cause": "healthy",
+        "summary": "ok",
+        "business_impact": "none",
+        "recommended_action": "none",
+    }
+    report = IncidentReport.model_validate(old)
+    assert report.affected_service == "unknown" and report.next_steps == []

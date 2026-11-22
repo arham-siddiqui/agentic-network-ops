@@ -26,6 +26,8 @@ def score_mode(records: list[dict]) -> dict:
     abstained = sum(r["predicted"] == UNKNOWN for r in faults)
     false_incidents = sum(r["predicted"] not in (HEALTHY, UNKNOWN) for r in healthy)
     supported = sum(r["evidence_count"] > 0 and not r["citation_problems"] for r in scored)
+    located = [r for r in scored if r.get("expected_affected")]
+    affected_correct = sum(r.get("predicted_affected") == r["expected_affected"] for r in located)
     costs = [r["cost_usd"] for r in scored if r.get("cost_usd") is not None]
     per_class: dict[str, dict] = {}
     for r in scored:
@@ -47,6 +49,9 @@ def score_mode(records: list[dict]) -> dict:
         "false_incidents": false_incidents,
         "false_incident_rate": _rate(false_incidents, len(healthy)),
         "healthy_abstained": sum(r["predicted"] == UNKNOWN for r in healthy),
+        "affected_service_correct": affected_correct,
+        "affected_service_scored": len(located),
+        "affected_service_accuracy": _rate(affected_correct, len(located)),
         "evidence_supported": supported,
         "evidence_support_rate": _rate(supported, len(scored)),
         "median_diagnosis_seconds": _median([r["latency_s"] for r in scored]),

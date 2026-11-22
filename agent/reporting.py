@@ -33,7 +33,14 @@ class ReportBuilder:
     def limit(self, text: str) -> None:
         self.limitations.append(text)
 
-    def finish(self, cause: str, summary: str, actions: dict[str, str]) -> IncidentReport:
+    def finish(
+        self,
+        cause: str,
+        summary: str,
+        actions: dict[str, str],
+        affected: str = "unknown",
+        next_steps: tuple[str, ...] = (),
+    ) -> IncidentReport:
         return IncidentReport(
             incident_id=self.bundle.incident_id,
             mode=self.mode,
@@ -45,6 +52,8 @@ class ReportBuilder:
             recommended_action=actions[cause],
             needs_human_review=cause != "healthy",
             limitations=self.limitations[:10],
+            affected_service=affected,
+            next_steps=list(next_steps)[:8],
         )
 
 

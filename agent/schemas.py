@@ -15,6 +15,7 @@ Cause = Literal[
 ]
 CAUSES: tuple[str, ...] = Cause.__args__
 Mode = Literal["rules", "llm_snapshot", "llm_tools"]
+AffectedService = Literal["api", "worker", "proxy", "api_worker_path", "none", "unknown"]
 SeriesStatus = Literal["ok", "no_data", "stale", "unavailable"]
 ShortText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=600)]
 AlertName = Annotated[str, StringConstraints(pattern=r"^[A-Za-z][A-Za-z0-9_]{0,63}$")]
@@ -74,7 +75,8 @@ class Evidence(Strict):
 
 
 class IncidentReport(Strict):
-    schema_version: Literal["1"] = "1"
+    # 1.1 adds affected_service and next_steps with defaults, so 1.0 reports still validate.
+    schema_version: Literal["1", "1.1"] = "1.1"
     incident_id: str
     mode: Mode
     time_window_utc: TimeWindow
@@ -88,3 +90,6 @@ class IncidentReport(Strict):
     action_taken: Literal[False] = False
     needs_human_review: bool = True
     limitations: list[ShortText] = Field(default_factory=list, max_length=10)
+    affected_service: AffectedService = "unknown"
+    # Read-only follow-up investigation for a human or a future agent; never an action.
+    next_steps: list[ShortText] = Field(default_factory=list, max_length=8)

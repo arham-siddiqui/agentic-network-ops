@@ -19,6 +19,9 @@ COLUMNS = (
     "false_incidents",
     "false_incident_rate",
     "healthy_abstained",
+    "affected_service_correct",
+    "affected_service_scored",
+    "affected_service_accuracy",
     "evidence_supported",
     "evidence_support_rate",
     "median_diagnosis_seconds",
@@ -56,8 +59,9 @@ def write_summary(run_dir: Path, scores: dict, infra: dict, manifest: dict, arti
         "## Diagnosis by mode",
         "",
         "| Mode | Correct (fault windows) | Abstained | Wrong cause | Healthy misdiagnosed "
-        "| Evidence supported | Failed trials | Median diagnosis s | Tokens in/out | Est. cost |",
-        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+        "| Affected service correct | Evidence supported | Failed trials | Median diagnosis s "
+        "| Tokens in/out | Est. cost |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     for mode, r in scores.items():
         cost = r["estimated_cost_usd"]
@@ -65,6 +69,7 @@ def write_summary(run_dir: Path, scores: dict, infra: dict, manifest: dict, arti
             f"| {mode} | {_ratio(r['correct'], r['n_fault'])} | "
             f"{_ratio(r['abstained'], r['n_fault'])} | {_ratio(r['wrong_cause'], r['n_fault'])} | "
             f"{_ratio(r['false_incidents'], r['n_healthy'])} | "
+            f"{_ratio(r['affected_service_correct'], r['affected_service_scored'])} | "
             f"{_ratio(r['evidence_supported'], r['n_scored'])} | {r['n_failed_trials']} | "
             f"{_fmt(r['median_diagnosis_seconds'], 3)} | "
             f"{r['input_tokens']}/{r['output_tokens']} | "
