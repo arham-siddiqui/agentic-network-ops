@@ -40,6 +40,18 @@ The network fault controller is a separate container running `lab.network_fault`
 
 Docker does not publish ports from containers attached only to internal networks; the first Docker run showed the ports silently unbound. The API, Prometheus, and Grafana therefore also join an `edge` bridge whose IP masquerading is disabled. It carries the `127.0.0.1` port mappings without giving containers outbound NAT. Grafana needs a 512-PID cap and 384 MiB, because it starts one process per bundled plugin; the other services keep 64 PIDs.
 
+## Read-only telemetry interface and planned LLM integration
+
+The investigator side has three layers, all on the host and all read-only:
+
+1. **Sources.** `PrometheusSource` (`agent/telemetry.py`) only runs queries from the fixed catalogue (`agent/catalog.py`) and reads the alerts API; it has no method that accepts PromQL. `DockerLogSource` (`agent/tools.py`) runs `docker compose logs` with fixed flags, a validated service name, and computed time bounds.
+2. **Tools.** `LabTools.get_service_metrics`, `get_service_logs`, and `get_active_alerts` validate every input, bound every result, and report missing or unavailable data explicitly. Logs pass through an allowlist parser that keeps only request records and fixed lifecycle events. The worker's stdout also carries the CPU fault's ground-truth records, so filtering at this layer is required, not optional.
+3. **Diagnosis.** The deterministic baseline (`agent/rules_baseline.py`) reads a captured evidence bundle and writes an `IncidentReport` (schema 1.1): cause, affected service, cited evidence, impact, an advisory recommendation, read-only next steps, and limitations.
+
+The next stage puts an LLM on top of layer 2. The planned agent receives an alert or a time window. It calls only the three tools, under per-investigation budgets for calls, time, and tokens, and returns an `IncidentReport`. The evaluator scores it against the same labelled scenarios as the rules. Ground truth (fault markers, controller jobs, scenario records, and evaluation labels) is unreachable from the tools by construction, and tests check that it never appears in tool output. Fault injection stays with operators and the evaluator: the CPU and network controllers behind Unix sockets, and `scripts/worker_outage.py` for worker outages. None of them is exposed as a tool.
+
+The repository already contains experimental, optional LLM modes (`agent/investigator.py`, `uv sync --extra llm`) from the November milestone. They read saved evidence bundles rather than these live tools, and no real-model evaluation has been run. The next stage either moves them onto `LabTools` or replaces them.
+
 All containers drop capabilities, use non-root users and read-only root filesystems, and have memory/CPU/PID limits. Writable state lives in named volumes or a size-limited temporary filesystem. Source configuration mounts are read-only. Application request logs omit raw query strings and client addresses. Prometheus retention settings are 24 hours and 200 MB; its active head and write-ahead log can require additional space. Grafana state and scenario records persist until explicitly removed.
 
 The implementation is a monitoring substrate. It does not establish cybersecurity detection accuracy, agent correctness, or safe autonomous operations. Those require later labeled experiments and measured evaluation.

@@ -1,6 +1,6 @@
 # Agentic Network Ops
 
-A local distributed-services lab for studying infrastructure failures through measured telemetry. Stage 1 implements two Python services, Prometheus monitoring, a provisioned Grafana dashboard, bounded traffic, and one controlled CPU-pressure experiment. The November milestone adds a transparent TCP impairment proxy on the API→worker path with two bounded network scenarios (added latency and request timeouts). Agent-based diagnosis is in progress; see the [roadmap](docs/roadmap.md).
+A local distributed-services lab for studying infrastructure failures through measured telemetry. Stage 1 implements two Python services, Prometheus monitoring, a provisioned Grafana dashboard, bounded traffic, and one controlled CPU-pressure experiment. The November milestone adds a transparent TCP impairment proxy on the API→worker path with two bounded network scenarios (added latency and request timeouts). A bounded worker-outage scenario stops and restarts the worker container. A provider-independent, read-only tools interface exposes metrics, sanitized logs, and alerts for a future diagnostic agent. A deterministic baseline and a labelled evaluation framework score diagnoses against ground truth. A [demo site](https://arham-siddiqui.github.io/agentic-network-ops/) visualizes the lab; see the [roadmap](docs/roadmap.md).
 
 ```mermaid
 flowchart LR
@@ -48,6 +48,8 @@ make check-rules
 make demo
 # Validation target: repeat the entire experiment three times.
 python3 scripts/demo.py --runs 3
+# Worker outage: stops the worker container for 60 s, then restarts it.
+python3 scripts/demo.py --scenario worker_down
 ```
 
 The script starts bounded traffic, collects a 20-second baseline, injects a 60-second worker CPU fault, checks for `WorkerCpuPressure` firing, waits for natural expiry, and checks both scrape targets, CPU recovery, and alert clearance. It also checks Grafana provisioning and API functionality. It exits with a failure if any required observation is missing. Each run takes roughly two minutes plus setup. Run it alone: concurrent experiments or a manually active fault invalidate the baseline.
@@ -133,12 +135,40 @@ One overlap is documented rather than hidden. CPU pressure can delay requests be
 ## Evaluate diagnoses
 
 ```sh
-make evaluate                                      # healthy, cpu, latency, timeout x 3 (~30 min)
+make evaluate                                      # healthy, cpu, latency, timeout, worker_down x 3 (~50 min)
 make evaluate REPS=1                               # quicker pass
 make evaluate-score RUN=artifacts/evaluation/<timestamp> MODES=llm_snapshot,llm_tools
 ```
 
-Each trial runs bounded load, injects a fault (or nothing, for healthy controls), and captures an evidence bundle 40 seconds later. It then records recovery and cleans up. Bundles and labels go to separate directories; every mode diagnoses the same saved bundles, and predictions are scored against labels only afterwards. Failed trials and abstentions stay in the counts. Results go to `artifacts/evaluation/<timestamp>/` and `artifacts/evaluation-summary.{csv,md}`. See [experimental method](docs/experimental-method.md) for definitions and limits. **No evaluation results exist yet.** The pipeline is tested against a simulated lab only, because Docker has not been available on the development machine.
+Each trial runs bounded load for an 85-second baseline, injects a fault (or nothing, for healthy controls), and captures a 120-second evidence bundle 40 seconds later, so the window never reaches into the previous trial. It then records recovery and cleans up. Bundles and labels go to separate directories; every mode diagnoses the same saved bundles, and predictions are scored against labels only afterwards. Failed trials and abstentions stay in the counts. Results go to `artifacts/evaluation/<timestamp>/` and `artifacts/evaluation-summary.{csv,md}`. See [experimental method](docs/experimental-method.md) for definitions and limits. The first real run (2026-11-21, one repetition each of healthy, cpu, latency, and timeout) is in [validation notes](docs/validation.md); it is smoke-level evidence, not an accuracy claim.
+
+## Inspect telemetry (read-only tools)
+
+```sh
+make telemetry SERVICE=worker WINDOW=300      # metrics, recent logs, and active alerts
+uv run --frozen python -m agent.tools metrics api --window 120
+uv run --frozen python -m agent.tools logs api --window 120 --limit 20
+uv run --frozen python -m agent.tools alerts
+make integration                              # tool checks against the running lab
+```
+
+[`agent/tools.py`](agent/tools.py) is the interface a future diagnostic agent will call. It doesn't depend on any LLM provider or framework: three plain methods return JSON-serializable dicts.
+
+- `get_service_metrics(service, time_window)`: for `api`, `worker`, or `proxy`, summarizes that service's catalogue series (CPU, RSS, request rate, p50/p95 latency, slow fraction, error fraction, scrape health, and for the API, worker-call outcomes). Each series reports its status (`ok`, `no_data`, `stale`, or `unavailable`) and the recent mean, max, window min/max, and last value.
+- `get_service_logs(service, time_window, limit)`: for `api` or `worker`, reads container stdout through `docker compose logs` with fixed arguments. It keeps only validated `http_request` records and a fixed set of Uvicorn lifecycle events (start, shutdown). Everything else, including the CPU fault's ground-truth records found in the worker's stdout, is counted as dropped and never returned. It returns status and route counts, duration percentiles, the newest `limit` records (at most 200), and the newest 5xx records.
+- `get_active_alerts()`: firing and pending alerts from Prometheus's alerts API, with only well-formed names and allowlisted labels.
+
+Windows are 60–900 seconds. Log reads keep at most 5,000 lines and stop at 16 MiB. Unknown services, out-of-range windows, and non-integer arguments raise `ToolInputError`. An unavailable Prometheus or log source returns `status: "unavailable"`, never an empty healthy-looking result. Nothing in the interface can inject or stop faults, run queries of its own, or change containers.
+
+## Demo site
+
+[https://arham-siddiqui.github.io/agentic-network-ops/](https://arham-siddiqui.github.io/agentic-network-ops/) is a static console with three modes:
+
+- **Simulation:** a browser model of the lab using the repository's parameters and alert rules, labelled as simulation.
+- **Recorded run:** replays real evidence bundles and rules reports exported from an evaluation run (`python -m evaluation.export_site <run_dir>`, listed in `site/data/recorded/index.json`).
+- **Live (local):** `make live-demo` serves the site at http://127.0.0.1:8088 with a read-only `/live/snapshot` of the running lab. Faults are still injected from the terminal.
+
+Site parameters live in `site/js/config.js`. Pushes to `demo-site` or `main` that change `site/` redeploy GitHub Pages.
 
 ## What the metrics mean
 
