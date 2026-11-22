@@ -7,8 +7,8 @@ The evaluation asks one question: given the same unlabeled telemetry, how often 
 `python -m evaluation.run trials --reps N` (or `make evaluate`) runs each selected scenario `N` times in a seeded random order (default seed `20261103`, recorded in the manifest). Each trial:
 
 1. Requires an idle lab: no CPU or network fault active, both application targets up, no alert firing.
-2. Starts bounded load: 10 requests/second, at most 4 in flight, for 180 seconds.
-3. Waits 30 seconds of baseline.
+2. Starts bounded load: 10 requests/second, at most 4 in flight, for 240 seconds.
+3. Waits 85 seconds of baseline under load. `Settings` rejects any combination where the 120-second evidence window would start before this trial's load. The first real run used a 30-second baseline, and its windows reached about 50 seconds into the previous trial's fault.
 4. Injects the scenario's fault through the normal `docker compose exec` control channel. Healthy controls skip this step.
 5. Waits 40 seconds, the **decision delay**, which is the same for every scenario including healthy.
 6. Captures an evidence bundle covering the previous 120 seconds at a 5-second step through the investigator's allowlisted, read-only source, and saves it under `bundles/`.
@@ -21,9 +21,10 @@ The evaluation asks one question: given the same unlabeled telemetry, how often 
 | `cpu` | `cpu_pressure` | worker CPU thread, 60 s | `WorkerCpuPressure` |
 | `latency` | `network_latency` | proxy downstream latency 600 ms, 60 s | `ApiHighLatency` |
 | `latency_low` (opt-in) | `network_latency` | proxy downstream latency 300 ms, 60 s | `ApiHighLatency` |
-| `timeout` | `network_connectivity_or_timeout` | proxy drops API→worker bytes, 60 s | `WorkerCallTimeouts` |
+| `timeout` | `network_connectivity_or_timeout` | proxy drops API→worker bytes, 60 s (API returns 504: errors caused by a downstream failure) | `WorkerCallTimeouts` |
+| `worker_down` | `service_unavailable` | `scripts/worker_outage.py` stops the worker container for 60 s, then restarts it (API returns 502) | `ServiceUnavailable` |
 
-`service_unavailable` exists as a diagnosis but has no automated trial yet. Stopping a container is a different kind of lab action than the bounded fault controllers, and it is left for a later milestone.
+Each scenario also records its expected affected service (`none`, `worker`, or `api_worker_path`), which is scored against the report's `affected_service`. The worker outage is run by a host-side script, not an in-container controller. It is bounded to 1–120 s, always restarts the worker in `finally`, and writes its ground truth to `artifacts/worker-outages.jsonl`.
 
 ## Keeping ground truth away from the investigators
 
@@ -40,6 +41,7 @@ The evaluation asks one question: given the same unlabeled telemetry, how often 
 | Correct (fault windows) | Predicted cause equals the label, over captured fault trials. Reported as `correct/n_fault`. |
 | Abstained | `unknown_or_ambiguous` on a fault trial, reported separately and never counted as correct. |
 | Wrong cause | A different modeled cause on a fault trial. |
+| Affected service correct | The report's `affected_service` equals the scenario's ground-truth service, over all scored trials, healthy controls included. |
 | Healthy misdiagnosed | A fault cause predicted on a healthy control. Abstaining on a healthy control is counted separately (`healthy_abstained`). |
 | Evidence supported | The report cites at least one metric, and every cited value matches the bundle (5% relative or 0.005 absolute tolerance, units must match). In `llm_tools` mode, every cited metric must also have been retrieved through a tool. |
 | Median diagnosis seconds | Time to produce a schema-valid report from a saved bundle. It excludes capture and the decision delay. |
