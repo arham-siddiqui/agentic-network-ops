@@ -74,8 +74,9 @@ IMPACT = {
     '(rate(lab_http_request_duration_seconds_bucket{job="api",route="/work"}[30s])))',
     "worker_p95_seconds": "histogram_quantile(0.95, sum by (le) "
     '(rate(lab_http_request_duration_seconds_bucket{job="worker",route="/work"}[30s])))',
-    "api_error_fraction": 'sum(rate(lab_http_requests_total{job="api",route="/work",status=~"5.."}'
-    '[30s])) / clamp_min(sum(rate(lab_http_requests_total{job="api",route="/work"}[30s])), 0.1)',
+    "api_error_fraction": '(sum(rate(lab_http_requests_total{job="api",route="/work",status=~"5.."}'
+    '[30s])) or on () vector(0)) '
+    '/ clamp_min(sum(rate(lab_http_requests_total{job="api",route="/work"}[30s])), 0.1)',
     "worker_cpu_cores": 'rate(process_cpu_seconds_total{job="worker"}[15s])',
 }
 

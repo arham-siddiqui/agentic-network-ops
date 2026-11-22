@@ -36,7 +36,8 @@ def _slow_fraction(job: str) -> str:
 def _error_fraction(job: str) -> str:
     requests, failed = "lab_http_requests_total", ',status=~"5.."'
     return (
-        f"sum(rate({requests}{{{_work(job, failed)}}}[30s])) "
+        # No 5xx series yet means zero errors; idle traffic still divides 0 by 0 (undefined).
+        f"(sum(rate({requests}{{{_work(job, failed)}}}[30s])) or on () vector(0)) "
         f"/ sum(rate({requests}{{{_work(job)}}}[30s]))"
     )
 
