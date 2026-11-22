@@ -119,7 +119,7 @@ export class LineChart {
     const span = d.t1 - d.t0;
     for (let s = 0; s <= span; s += 60) {
       const t = d.t1 - s;
-      ctx.fillText(s === 0 ? "now" : `−${s / 60}m`, x(t), pad.t + ph + 6);
+      ctx.fillText(s === 0 ? (d.endLabel ?? "now") : `−${s / 60}m`, x(t), pad.t + ph + 6);
     }
 
     // thresholds

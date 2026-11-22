@@ -47,15 +47,35 @@ export function catalogue(prom) {
   return m;
 }
 
+export const UNITS = {
+  "proxy.up": "bool",
+  "api.worker_calls.success": "calls/s",
+  "api.worker_calls.timeout": "calls/s",
+  "api.worker_calls.error": "calls/s",
+  "api.worker_calls.invalid_response": "calls/s",
+};
+for (const job of ["api", "worker"]) {
+  Object.assign(UNITS, {
+    [`${job}.up`]: "bool",
+    [`${job}.request_rate`]: "requests/s",
+    [`${job}.error_fraction`]: "fraction",
+    [`${job}.latency_p50`]: "seconds",
+    [`${job}.latency_p95`]: "seconds",
+    [`${job}.slow_fraction`]: "fraction",
+    [`${job}.cpu`]: "cores",
+  });
+}
+
 // query_range over the lookback, then the same status and 30 s summary rules as telemetry.py.
-export function summarize(prom, end, config = CONFIG) {
+// `query(id, t)` returns a number, NaN (undefined, e.g. 0/0), or null (no sample).
+export function summarizeWith(query, end, config = CONFIG) {
   const { stepS, recentS, minRecentSamples, lookbackS } = config.investigator;
   const out = {};
-  for (const [id, [fn, unit]] of Object.entries(catalogue(prom))) {
+  for (const [id, unit] of Object.entries(UNITS)) {
     const points = [];
     for (let t = end - lookbackS; t <= end + 1e-9; t += stepS) {
-      const v = fn(t);
-      if (v !== null) points.push([t, Number.isFinite(v) ? v : null]);
+      const v = query(id, t);
+      if (v !== null && v !== undefined) points.push([t, Number.isFinite(v) ? v : null]);
     }
     const numeric = points.filter(([, v]) => v !== null);
     let status;
@@ -76,10 +96,20 @@ export function summarize(prom, end, config = CONFIG) {
   return out;
 }
 
+export function summarize(prom, end, config = CONFIG) {
+  const cat = catalogue(prom);
+  return summarizeWith((id, t) => cat[id][0](t), end, config);
+}
+
 const pct = (v) => (v === null ? "unknown" : `${Math.round(v * 100)}%`);
 
 export function diagnose(prom, end, config = CONFIG) {
-  const s = summarize(prom, end, config);
+  const cat = catalogue(prom);
+  return diagnoseWith((id, t) => cat[id][0](t), end, config);
+}
+
+export function diagnoseWith(query, end, config = CONFIG, mode = "rules (JS port, simulated data)") {
+  const s = summarizeWith(query, end, config);
   const evidence = [];
   const limitations = [];
   const cite = (id) => {
@@ -98,7 +128,7 @@ export function diagnose(prom, end, config = CONFIG) {
     `${pct(apiSlow)} of responses slower than 250 ms (p95 ${p95 === null ? "unknown" : `${p95.toFixed(2)} s`}); ` +
     `${pct(apiErrors)} returned HTTP 5xx.`;
   const finish = (cause, summary) => ({
-    mode: "rules (JS port, simulated data)",
+    mode,
     predicted_cause: cause,
     summary,
     evidence,

@@ -124,8 +124,13 @@ export class Topology {
     const kind = state.fault?.kind;
     const set = (node, cls) => this.nodes[node].setAttribute("class", `node ${cls}`.trim());
     set("worker", kind === "cpu" ? "hot" : kind === "worker_down" ? "down" : "");
-    set("proxy", kind === "proxy_down" ? "down" : kind === "latency" || kind === "timeout" ? "impaired" : "");
-    this.links.apiProxy.setAttribute("class", kind === "proxy_down" ? "link broken" : kind === "latency" ? "link impaired" : "link");
+    const network = kind === "latency" || kind === "timeout" || kind === "network";
+    set("proxy", !state.up["impairment-proxy"] || kind === "proxy_down" ? "down" : network ? "impaired" : "");
+    if (!state.up.worker) set("worker", "down");
+    this.links.apiProxy.setAttribute(
+      "class",
+      kind === "proxy_down" ? "link broken" : kind === "latency" || kind === "network" ? "link impaired" : "link",
+    );
     this.links.proxyWorker.setAttribute(
       "class",
       kind === "timeout" || kind === "worker_down" ? "link broken" : kind === "latency" ? "link impaired" : "link",
@@ -136,7 +141,15 @@ export class Topology {
     const p = state.fault?.params;
     this.badge(
       "proxy",
-      kind === "latency" ? `toxic: +${p.latencyMs} ms` : kind === "timeout" ? "toxic: dropping requests" : kind === "proxy_down" ? "DOWN" : null,
+      kind === "latency"
+        ? `toxic: +${p?.latencyMs ?? "?"} ms`
+        : kind === "timeout"
+          ? "toxic: dropping requests"
+          : kind === "network"
+            ? "network fault (ground truth)"
+            : kind === "proxy_down"
+              ? "DOWN"
+              : null,
       kind === "proxy_down",
     );
     this.badge("worker", kind === "cpu" ? `CPU ${state.workerCpu?.toFixed(2) ?? "?"} / 0.50` : kind === "worker_down" ? "DOWN" : null, kind === "worker_down");

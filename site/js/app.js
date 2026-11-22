@@ -1,23 +1,36 @@
 import { LineChart } from "./charts.js";
 import { CONFIG } from "./config.js";
 import { FAULTS } from "./sim.js";
-import { RECORDED_STATUS, SimulationSource, liveStatus } from "./sources.js";
+import { LiveSource, RecordedSource, SimulationSource, liveStatus, loadRecorded } from "./sources.js";
 import { Topology } from "./topology.js";
 
 const $ = (id) => document.getElementById(id);
 const C = { api: "#3987e5", worker: "#d95926", good: "#0ca30c", serious: "#ec835a", critical: "#d03b3b" };
 
-const source = new SimulationSource(CONFIG);
+const sim = new SimulationSource(CONFIG);
+let source = sim;
 const topology = new Topology($("topology"), CONFIG);
 let speed = 1;
+let recSpeed = 4;
 let paused = false;
+let recPlaying = false;
 let quiet = false; // suppresses packet animation while pre-running history
+let recorded = { available: false, files: [], reason: "Loading…" };
+let live = null;
 
 // ---------- formatting ----------
-const clock = (t) => {
-  const s = Math.max(0, Math.floor(t));
-  return `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
+const mmss = (s) => {
+  const v = Math.max(0, Math.floor(s));
+  return `${String(Math.floor(v / 60)).padStart(2, "0")}:${String(v % 60).padStart(2, "0")}`;
 };
+function stamp(t) {
+  if (source.kind === "simulation") return mmss(t);
+  if (source.kind === "recorded") {
+    const d = t - source.end;
+    return d >= -0.5 ? "T+0" : `T−${Math.round(-d)}s`;
+  }
+  return new Date(t * 1000).toLocaleTimeString([], { hour12: false });
+}
 const fmtValue = (v, unit) => {
   if (v === null || v === undefined || !Number.isFinite(v)) return "no data";
   if (unit === "fraction") return `${(v * 100).toFixed(v < 0.1 ? 1 : 0)}%`;
@@ -26,26 +39,22 @@ const fmtValue = (v, unit) => {
   if (unit === "cores") return `${v.toFixed(2)} cores`;
   return `${v.toFixed(2)} ${unit}`;
 };
-
-// ---------- tabs / honesty ----------
-const live = liveStatus();
-$("tab-recorded").title = RECORDED_STATUS.reason;
-$("tab-recorded").textContent = "Recorded run · soon";
-$("tab-live").title = live.reason;
-$("tab-live").textContent = live.available ? "Live (local)" : "Live (local) · soon";
+const escapeHtml = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 
 // ---------- event log ----------
 const logEl = $("log");
+let loggedEvents = 0;
 function log(text, cls = "", t = source.now()) {
   const li = document.createElement("li");
-  li.innerHTML = `<time>${clock(t)}</time><span class="${cls}"></span>`;
+  li.innerHTML = `<time>${stamp(t)}</time><span class="${cls}"></span>`;
   li.querySelector("span").textContent = text;
   logEl.prepend(li);
   while (logEl.children.length > 200) logEl.lastChild.remove();
 }
 
-source.lab.on((type, data) => {
-  if (type === "request" && !quiet) topology.addRequest(data, source.now());
+sim.lab.on((type, data) => {
+  if (source !== sim) return;
+  if (type === "request" && !quiet) topology.addRequest(data, sim.now());
   if (type === "fault_start") {
     const p = data.params;
     const detail = data.kind === "latency" ? ` +${p.latencyMs} ms` : "";
@@ -54,8 +63,118 @@ source.lab.on((type, data) => {
   if (type === "fault_end") log(`ground truth: ${FAULTS[data.kind].label} ended (${data.reason})`, "gt");
 });
 
-// ---------- controls ----------
-const grid = $("fault-grid");
+// ---------- modes ----------
+const BANNERS = {
+  simulation: ["SIMULATION", "Modeled behavior, not measurements from the lab. Rules, thresholds and limits mirror the repository; service timings are assumptions.", ""],
+  recorded: ["RECORDED RUN", "Real telemetry exported from a lab run, replayed exactly as the investigator received it. The report is the real rules output.", "recorded"],
+  live: ["LIVE LAB", "Real telemetry from the Compose lab on this laptop, polled every 2 s through a read-only bridge.", "live"],
+};
+const HINTS = {
+  simulation: {
+    topology: "packet speed slowed for visibility; fault delays at real scale",
+    charts: "Charts mirror the Grafana dashboard panels, computed from simulated scrapes with the same windows.",
+    inv: "JS port of agent/rules_baseline.py · read-only",
+    alerts: "rules from monitoring/alerts.yml · evaluated every 2 s · pending → firing after <code>for: 10s</code>",
+  },
+  recorded: {
+    topology: "node states from recorded scrapes; fault badges from ground truth",
+    charts: "Charts replay the real evidence bundle (catalogue queries at a 5 s step).",
+    inv: "the real report produced by agent/rules_baseline.py on this bundle",
+    alerts: "firing alerts as recorded in the bundle (ALERTS samples; pending state is not recorded)",
+  },
+  live: {
+    topology: "node states from live scrapes; fault badges from ground-truth markers",
+    charts: "Charts plot live instant-query values from the lab's Prometheus.",
+    inv: "JS port of agent/rules_baseline.py over live telemetry; run <code>make investigate</code> for the real report",
+    alerts: "live alert states from the lab's Prometheus",
+  },
+};
+
+function setMode(kind, next) {
+  source = next;
+  for (const k of ["simulation", "recorded", "live"]) $(`tab-${k}`).setAttribute("aria-selected", String(k === kind));
+  const [title, text, cls] = BANNERS[kind];
+  $("banner-title").textContent = title;
+  $("banner-text").textContent = text;
+  $("banner").className = `banner ${cls}`.trim();
+  $("topology-hint").textContent = HINTS[kind].topology;
+  $("charts-note").innerHTML = `${HINTS[kind].charts} The shaded band is the injected fault — <b>ground truth, not an alert or investigator input</b>. Hover any chart for values.`;
+  $("inv-hint").innerHTML = HINTS[kind].inv;
+  $("alerts-hint").innerHTML = HINTS[kind].alerts;
+  $("sim-controls").hidden = kind !== "simulation";
+  $("rec-controls").hidden = kind !== "recorded";
+  $("live-controls").hidden = kind !== "live";
+  $("presenter").hidden = kind !== "simulation";
+  $("inv-controls").hidden = kind === "recorded";
+  topology.clear();
+  logEl.innerHTML = "";
+  loggedEvents = 0;
+  lastCause = null;
+  nextAutoInv = kind === "simulation" ? Math.max(30, source.now()) : 0;
+  $("inv-body").innerHTML = `<p class="note">${kind === "recorded" ? "The real report appears at the decision time (end of the window)." : "Waiting for 30 s of telemetry…"}</p>`;
+  if (kind === "simulation" && source.now() >= 30) runInvestigator();
+  refresh();
+}
+
+$("tab-simulation").addEventListener("click", () => setMode("simulation", sim));
+$("tab-recorded").addEventListener("click", () => {
+  if (!recorded.available) return;
+  openRecorded(Number($("rec-select").value || 0));
+});
+$("tab-live").addEventListener("click", () => {
+  if (!liveStatus().available) return;
+  live ??= new LiveSource(CONFIG);
+  setMode("live", live);
+});
+
+// ---------- recorded ----------
+function openRecorded(flatIndex) {
+  const options = recordedOptions();
+  const pick = options[flatIndex] ?? options[0];
+  const rec = new RecordedSource(pick.file.data, pick.index, CONFIG);
+  recPlaying = true;
+  $("rec-play").textContent = "Pause";
+  setMode("recorded", rec);
+  const inc = rec.incident;
+  const p = inc.ground_truth?.params ?? {};
+  const params = Object.entries(p).map(([k, v]) => `${k}=${v}`).join(", ");
+  $("rec-truth").className = "active-fault";
+  $("rec-truth").textContent = `ground truth: ${inc.scenario} → label ${inc.label}${params ? ` (${params})` : ""}`;
+  const lab = pick.file.data.lab ?? {};
+  $("rec-meta").textContent = `File ${pick.file.name} · captured ${pick.file.data.captured_on ?? "?"}${lab.docker_version ? ` · Docker ${lab.docker_version}` : ""}`;
+}
+function recordedOptions() {
+  const out = [];
+  for (const file of recorded.files) file.data.incidents.forEach((inc, index) => out.push({ file, index, inc }));
+  return out;
+}
+$("rec-select").addEventListener("change", (e) => openRecorded(Number(e.target.value)));
+$("rec-play").addEventListener("click", () => {
+  if (source.kind !== "recorded") return;
+  if (source.now() >= source.end) source.reset();
+  recPlaying = !recPlaying;
+  $("rec-play").textContent = recPlaying ? "Pause" : "Play";
+});
+$("rec-restart").addEventListener("click", () => {
+  if (source.kind !== "recorded") return;
+  source.reset();
+  logEl.innerHTML = "";
+  loggedEvents = 0;
+  recPlaying = true;
+  $("rec-play").textContent = "Pause";
+  $("inv-body").innerHTML = `<p class="note">The real report appears at the decision time (end of the window).</p>`;
+});
+$("rec-end").addEventListener("click", () => {
+  if (source.kind === "recorded") source.advance(source.end - source.now());
+});
+for (const b of document.querySelectorAll("[data-rec-speed]")) {
+  b.addEventListener("click", () => {
+    recSpeed = Number(b.dataset.recSpeed);
+    for (const o of document.querySelectorAll("[data-rec-speed]")) o.setAttribute("aria-pressed", String(o === b));
+  });
+}
+
+// ---------- simulation controls ----------
 const simOnly = new Set(["worker_down", "proxy_down"]);
 const FAULT_SUB = {
   latency: () => `+${$("p-latency").value} ms on worker→API responses`,
@@ -68,16 +187,16 @@ const faultButtons = {};
 for (const kind of Object.keys(FAULTS)) {
   const b = document.createElement("button");
   b.className = `fault-btn${simOnly.has(kind) ? " sim-only" : ""}`;
-  b.innerHTML = `<b></b><span></span>`;
+  b.innerHTML = "<b></b><span></span>";
   b.querySelector("b").textContent = FAULTS[kind].label;
   b.addEventListener("click", () => inject(kind));
-  grid.appendChild(b);
+  $("fault-grid").appendChild(b);
   faultButtons[kind] = b;
 }
 function inject(kind) {
   $("fault-error").textContent = "";
   try {
-    source.lab.inject(kind, {
+    sim.lab.inject(kind, {
       durationS: Number($("p-duration").value),
       latencyMs: kind === "latency" ? Number($("p-latency").value) : undefined,
     });
@@ -87,13 +206,13 @@ function inject(kind) {
   refresh();
 }
 $("stop-fault").addEventListener("click", () => {
-  source.lab.stop("stopped");
+  sim.lab.stop("stopped");
   refresh();
 });
 for (const b of document.querySelectorAll("[data-speed]")) {
   b.addEventListener("click", () => {
     speed = Number(b.dataset.speed);
-    for (const other of document.querySelectorAll("[data-speed]")) other.setAttribute("aria-pressed", String(other === b));
+    for (const o of document.querySelectorAll("[data-speed]")) o.setAttribute("aria-pressed", String(o === b));
   });
 }
 $("pause").addEventListener("click", () => {
@@ -101,7 +220,7 @@ $("pause").addEventListener("click", () => {
   $("pause").textContent = paused ? "Resume" : "Pause";
 });
 $("reset").addEventListener("click", () => {
-  source.reset();
+  sim.reset();
   topology.clear();
   logEl.innerHTML = "";
   lastAlertIndex = 0;
@@ -122,29 +241,42 @@ const ALERT_ROWS = [
   ['ServiceUnavailable{job="worker"}', "worker scrape fails for 10 s"],
   ["ImpairmentProxyUnavailable", "proxy scrape fails for 10 s"],
 ];
-const alertsEl = $("alerts");
 let lastAlertIndex = 0;
 function renderAlerts() {
   const now = source.now();
-  const byKey = Object.fromEntries(source.alerts().map((a) => [a.key, a]));
-  alertsEl.innerHTML = "";
+  const byKey = {};
+  for (const a of source.alerts()) {
+    // Recorded/live alerts carry only the alert name; keep the most severe state per name.
+    const rank = { firing: 2, pending: 1, inactive: 0 };
+    if (!byKey[a.key] || rank[a.state] > rank[byKey[a.key].state]) byKey[a.key] = a;
+  }
+  $("alerts").innerHTML = "";
   for (const [key, desc] of ALERT_ROWS) {
-    const a = byKey[key] ?? { state: "inactive" };
+    const generic = key.split("{")[0];
+    const a = byKey[key] ?? byKey[generic] ?? { state: "inactive" };
     const row = document.createElement("div");
     row.className = `alert-row ${a.state}`;
-    const since = a.state === "pending" ? now - a.activeAt : a.state === "firing" ? now - a.firedAt : null;
+    const since = a.state === "pending" && a.activeAt !== undefined ? now - a.activeAt : a.state === "firing" && a.firedAt !== undefined ? now - a.firedAt : null;
     const label = a.state === "firing" ? "▲ FIRING" : a.state === "pending" ? "● PENDING" : "inactive";
     row.innerHTML = `<span class="name"></span><span class="state ${a.state}">${label}</span><span class="meta"></span>`;
     row.querySelector(".name").textContent = key;
     const value = a.value === undefined ? "" : ` · now ${fmtValue(a.value, a.unit)}`;
-    row.querySelector(".meta").textContent = `${desc}${value}${since !== null ? ` · ${Math.round(since)} s` : ""}`;
-    alertsEl.appendChild(row);
+    const jobNote = !byKey[key] && byKey[generic] ? " · job not recorded" : "";
+    row.querySelector(".meta").textContent = `${desc}${value}${since !== null ? ` · ${Math.round(since)} s` : ""}${jobNote}`;
+    $("alerts").appendChild(row);
   }
-  const transitions = source.alertLog();
-  for (; lastAlertIndex < transitions.length; lastAlertIndex++) {
-    const x = transitions[lastAlertIndex];
-    const cls = x.to === "firing" ? "firing" : x.to === "resolved" ? "resolved" : "";
-    log(`alert ${x.key} → ${x.to}`, cls, x.t);
+  if (source === sim) {
+    const transitions = sim.alertLog();
+    for (; lastAlertIndex < transitions.length; lastAlertIndex++) {
+      const x = transitions[lastAlertIndex];
+      log(`alert ${x.key} → ${x.to}`, x.to === "firing" ? "firing" : x.to === "resolved" ? "resolved" : "", x.t);
+    }
+  } else {
+    const events = source.events();
+    for (; loggedEvents < events.length && events[loggedEvents].t <= now + 1e-6; loggedEvents++) {
+      const e = events[loggedEvents];
+      log(e.text, e.cls, e.t);
+    }
   }
 }
 
@@ -191,40 +323,37 @@ const PANELS = [
 ];
 const charts = PANELS.map((spec) => new LineChart($("charts"), spec));
 function renderCharts() {
-  const t1 = source.now();
-  const span = CONFIG.ui.chartWindowS;
-  const t0 = t1 - span;
-  const step = CONFIG.prometheus.scrapeIntervalS;
+  const { t0, t1, step, endLabel } = source.window();
   const xs = [];
-  for (let t = Math.ceil(t0 / step) * step; t <= t1; t += step) xs.push(t);
+  for (let t = Math.ceil(t0 / step - 1e-9) * step; t <= t1 + 1e-9; t += step) xs.push(t);
   const bands = source.bands();
+  const minT = source === sim ? 2 : -Infinity;
   for (const [i, spec] of PANELS.entries()) {
     const series = {};
-    for (const s of spec.series) series[s.key] = xs.map((t) => (t < 2 ? null : source.query(s.key, t)));
-    charts[i].setData({ t0, t1, xs, series, bands });
+    for (const s of spec.series) series[s.key] = xs.map((t) => (t < minT ? null : source.query(s.key, t)));
+    charts[i].setData({ t0, t1, xs, series, bands, endLabel });
   }
 }
 
 // ---------- investigator ----------
 let lastCause = null;
 let nextAutoInv = 30;
-function runInvestigator() {
-  const r = source.diagnose();
+function renderReport(r) {
   const cls = r.predicted_cause === "healthy" ? "healthy" : r.predicted_cause === "unknown_or_ambiguous" ? "unknown" : "fault";
-  const evidence = r.evidence
-    .map((e) => `<tr><td><code>${e.metric_id}</code></td><td class="num">${fmtValue(e.observed_value, e.units)}</td><td>${e.statistic}</td></tr>`)
+  const evidence = (r.evidence ?? [])
+    .map((e) => `<tr><td><code>${escapeHtml(e.metric_id)}</code></td><td class="num">${fmtValue(e.observed_value, e.units)}</td><td>${escapeHtml(e.statistic)}</td></tr>`)
     .join("");
-  const limits = r.limitations.length ? `<dt>limitations</dt><dd>${r.limitations.map(escapeHtml).join("<br>")}</dd>` : "";
+  const limits = r.limitations?.length ? `<dt>limitations</dt><dd>${r.limitations.map(escapeHtml).join("<br>")}</dd>` : "";
   $("inv-body").innerHTML = `
-    <div class="inv-head"><span class="cause ${cls}">${r.predicted_cause}</span>
-      <span class="note">at sim ${clock(source.now())} · last 30 s of a 120 s window</span></div>
+    <div class="inv-head"><span class="cause ${cls}">${escapeHtml(r.predicted_cause)}</span>
+      <span class="note">${escapeHtml(r.mode ?? "rules")} · at ${stamp(source.now())} · last 30 s of a 120 s window</span></div>
     <p class="inv-summary">${escapeHtml(r.summary)}</p>
     ${evidence ? `<table class="inv-table"><thead><tr><th>cited evidence</th><th style="text-align:right">value</th><th>statistic</th></tr></thead><tbody>${evidence}</tbody></table>` : ""}
     <dl class="kv">
       <dt>impact</dt><dd>${escapeHtml(r.business_impact)}</dd>
       <dt>recommended</dt><dd>${escapeHtml(r.recommended_action)}</dd>
       ${limits}
-      <dt>action_taken</dt><dd><span class="flag">false</span> — advisory only; no tool can change the lab</dd>
+      <dt>action_taken</dt><dd><span class="flag">${String(r.action_taken)}</span> — advisory only; no tool can change the lab</dd>
       <dt>human review</dt><dd>${r.needs_human_review ? "required" : "not required"}</dd>
     </dl>`;
   if (r.predicted_cause !== lastCause) {
@@ -232,12 +361,13 @@ function runInvestigator() {
     lastCause = r.predicted_cause;
   }
 }
-function escapeHtml(s) {
-  return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+function runInvestigator() {
+  const r = source.diagnose();
+  if (r) renderReport(r);
 }
 $("run-inv").addEventListener("click", runInvestigator);
 
-// ---------- presenter ----------
+// ---------- presenter (simulation) ----------
 const STEPS = [
   {
     text: "<b>1 · Architecture</b> Load → API → impairment proxy → worker on an internal network. Prometheus scrapes every 2 s. The investigator on the host reads 21 fixed queries and has no path to the fault controls (red, right).",
@@ -246,7 +376,7 @@ const STEPS = [
   {
     text: "<b>3 · Inject network latency</b> 600 ms on worker→API responses for 60 s. Responses queue at the proxy; the API's slow fraction climbs while the worker stays fast.",
     action: () => {
-      if (!source.lab.fault) {
+      if (!sim.lab.fault) {
         $("p-latency").value = 600;
         $("p-duration").value = 60;
         inject("latency");
@@ -281,26 +411,40 @@ showStep(0);
 function refresh() {
   const st = source.state();
   topology.update(st);
-  const f = st.fault;
-  for (const [kind, b] of Object.entries(faultButtons)) {
-    b.disabled = Boolean(f);
-    b.querySelector("span").textContent = FAULT_SUB[kind]();
-  }
-  $("stop-fault").disabled = !f;
-  const box = $("active-fault");
-  if (f) {
-    const left = Math.max(0, f.end - source.now());
-    const detail = f.kind === "latency" ? ` +${f.params.latencyMs} ms` : "";
-    box.className = "active-fault";
-    box.textContent = `${FAULTS[f.kind].label}${detail} · ${Math.ceil(left)} s left · ${f.runId}`;
+  if (source === sim) {
+    const f = st.fault;
+    for (const [kind, b] of Object.entries(faultButtons)) {
+      b.disabled = Boolean(f);
+      b.querySelector("span").textContent = FAULT_SUB[kind]();
+    }
+    $("stop-fault").disabled = !f;
+    const box = $("active-fault");
+    if (f) {
+      const left = Math.max(0, f.end - sim.now());
+      const detail = f.kind === "latency" ? ` +${f.params.latencyMs} ms` : "";
+      box.className = "active-fault";
+      box.textContent = `${FAULTS[f.kind].label}${detail} · ${Math.ceil(left)} s left · ${f.runId}`;
+    } else {
+      box.className = "active-fault none";
+      box.textContent = "No fault active.";
+    }
+    $("clock").innerHTML = `sim <b>${mmss(sim.now())}</b> · ${paused ? "paused" : `${speed}×`}<br>load ${st.load.success} ok · ${st.load.errors} errors · ${st.load.skipped} skipped`;
+  } else if (source.kind === "recorded") {
+    $("clock").innerHTML = `replay <b>${stamp(source.now())}</b> · ${recPlaying ? `${recSpeed}×` : "paused"}<br>decision at T+0`;
   } else {
-    box.className = "active-fault none";
-    box.textContent = "No fault active.";
+    $("clock").innerHTML = `live <b>${source.at ? stamp(source.at) : "—"}</b><br>${st.error ? `bridge error: ${escapeHtml(st.error)}` : "polling every 2 s"}`;
+    $("live-status").className = st.error ? "active-fault" : "active-fault none";
+    $("live-status").textContent = st.error
+      ? `Bridge unreachable (${st.error}). Is make live-demo running?`
+      : source.at
+        ? `Connected · last snapshot ${stamp(source.at)}${st.fault ? ` · ${st.fault.kind} fault marker ON (ground truth)` : ""}`
+        : "Connecting…";
   }
-  $("clock").innerHTML = `sim <b>${clock(source.now())}</b> · ${paused ? "paused" : `${speed}×`}<br>load ${st.load.success} ok · ${st.load.errors} errors · ${st.load.skipped} skipped`;
   renderAlerts();
   renderCharts();
-  if ($("auto-inv").checked && source.now() >= nextAutoInv) {
+  if (source.kind === "recorded") {
+    if (source.now() >= source.end - 1e-6 && lastCause === null) runInvestigator();
+  } else if ($("auto-inv").checked && source.now() >= nextAutoInv) {
     nextAutoInv = source.now() + CONFIG.ui.investigatorAutoRunS;
     runInvestigator();
   }
@@ -311,28 +455,73 @@ let lastUi = 0;
 function frame(now) {
   const realDt = Math.min(0.25, (now - last) / 1000);
   last = now;
-  if (!paused) source.advance(realDt * speed);
-  topology.render(source.now());
+  if (source === sim && !paused) sim.advance(realDt * speed);
+  if (source.kind === "recorded" && recPlaying) {
+    source.advance(realDt * recSpeed);
+    if (source.now() >= source.end) {
+      recPlaying = false;
+      $("rec-play").textContent = "Replay";
+    }
+  }
+  if (source.kind === "live") source.advance();
+  if (source === sim) topology.render(sim.now());
   if (now - lastUi > CONFIG.ui.chartRefreshMs) {
     lastUi = now;
     refresh();
   }
   requestAnimationFrame(frame);
 }
+
+// ---------- start ----------
+const liveInfo = liveStatus();
+$("tab-live").disabled = !liveInfo.available;
+$("tab-live").title = liveInfo.reason;
+$("tab-live").textContent = liveInfo.available ? "Live (local)" : "Live (local) · needs make live-demo";
+
 // Optional deep links: ?warmup=60 (seconds of baseline history, default 60),
-// ?fault=latency|timeout|cpu|worker_down|proxy_down&after=35 (inject, then run on).
+// ?fault=latency|timeout|cpu|worker_down|proxy_down&after=35 (inject, then run on),
+// ?mode=recorded|live.
 const params = new URLSearchParams(location.search);
 const warmup = Math.min(600, Math.max(0, Number(params.get("warmup") ?? 60) || 0));
 const warmFault = params.get("fault");
 quiet = true;
-source.advance(warmup);
+sim.advance(warmup);
 log(`simulation started with ${warmup} s of baseline history; bounded load at 10 req/s`);
 if (warmFault && FAULTS[warmFault]) {
   inject(warmFault);
-  source.advance(Math.min(120, Math.max(0, Number(params.get("after") ?? 35) || 0)));
+  sim.advance(Math.min(120, Math.max(0, Number(params.get("after") ?? 35) || 0)));
 }
 quiet = false;
-if (source.now() >= 30) runInvestigator();
-nextAutoInv = source.now() + CONFIG.ui.investigatorAutoRunS;
+if (sim.now() >= 30) runInvestigator();
+nextAutoInv = sim.now() + CONFIG.ui.investigatorAutoRunS;
 refresh();
 requestAnimationFrame(frame);
+
+loadRecorded().then((result) => {
+  recorded = result;
+  const tab = $("tab-recorded");
+  tab.disabled = !result.available;
+  tab.title = result.reason;
+  tab.textContent = result.available ? "Recorded run" : "Recorded run · none yet";
+  const select = $("rec-select");
+  select.innerHTML = "";
+  recordedOptions().forEach((o, i) => {
+    const opt = document.createElement("option");
+    opt.value = String(i);
+    opt.textContent = `${o.inc.scenario} → ${o.inc.reports?.rules?.predicted_cause ?? "?"} (${o.file.name})`;
+    select.appendChild(opt);
+  });
+  if (params.get("mode") === "recorded" && result.available) {
+    openRecorded(Number(params.get("incident") ?? 0) || 0);
+    if (params.get("at") === "end") {
+      source.advance(source.end - source.now());
+      recPlaying = false;
+      $("rec-play").textContent = "Replay";
+      refresh();
+    }
+  }
+});
+if (params.get("mode") === "live" && liveInfo.available) {
+  live = new LiveSource(CONFIG);
+  setMode("live", live);
+}

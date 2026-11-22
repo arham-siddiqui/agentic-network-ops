@@ -22,6 +22,10 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
+.cmds { margin: 0; padding: 10px; background: var(--page); border: 1px solid var(--border); border-radius: 8px; overflow-x: auto; }
+.cmds code { background: none; padding: 0; font-size: 12.5px; line-height: 1.6; }
+select { background: var(--page); border: 1px solid var(--border); border-radius: 6px; padding: 4px 6px; max-width: 100%; }
 
 body {
   margin: 0;
