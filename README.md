@@ -54,7 +54,7 @@ python3 scripts/demo.py --scenario worker_down
 
 The script starts bounded traffic, collects a 20-second baseline, injects a 60-second worker CPU fault, checks for `WorkerCpuPressure` firing, waits for natural expiry, and checks both scrape targets, CPU recovery, and alert clearance. It also checks Grafana provisioning and API functionality. It exits with a failure if any required observation is missing. Each run takes roughly two minutes plus setup. Run it alone: concurrent experiments or a manually active fault invalidate the baseline.
 
-Actual observations and ground truth are saved to ignored `artifacts/<experiment-id>.json`, with load output beside them. Detection/recovery times are polling observations, not exact event times. Ground-truth start/end events carry their own UTC timestamps. Three successful repetitions are a target until you run them; this repository does not claim measured incident performance yet.
+Actual observations and ground truth are saved to ignored `artifacts/<experiment-id>.json`, with load output beside them. Each report holds the fault's ground-truth start/end records with UTC timestamps, the signal and CPU samples, the observed detection and recovery intervals, and pass/fail status. Detection/recovery times are polling observations, not exact event times. On 2026-11-21 three consecutive CPU runs passed (alert observed after 22.1–22.2 s, recovery 6.0–8.1 s), and one worker-outage run passed (`ServiceUnavailable` after 14.1 s). These are single-machine observations; see [validation notes](docs/validation.md).
 
 ## Run the network impairment
 
