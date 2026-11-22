@@ -76,7 +76,7 @@ python3 scripts/demo.py --scenario latency --runs 3
 
 `ApiHighLatency` fires when over 25% of API `/work` responses take longer than 250 ms for 10 seconds, with a traffic guard so idle periods cannot fire. `WorkerCallTimeouts` fires when over 20% of worker calls time out for 10 seconds. Compare the "slower than 250 ms" panel for the API and the worker: a slow API with a fast worker places the delay between them. The network fault marker on the dashboard is ground truth and is **not** an alert input. These delays come from a userspace TCP proxy: they model a slow or black-holed transport path, not packet loss, routing changes, or link failure.
 
-These network scenarios are implemented and unit-tested against a simulated proxy admin API. They have **not yet been run in Docker**; see [validation notes](docs/validation.md).
+First Docker run (one run each, 2026-11-21): the 600 ms scenario added 0.603–0.608 s per request; `ApiHighLatency` was observed 24.2 s after injection. The timeout scenario produced 504s at 2.002–2.010 s, and `WorkerCallTimeouts` was observed 28.2 s after injection. Removing the timeout toxic closed the in-flight connections, so the 4 requests then in flight returned 502. These are single observations, not benchmarks; see [validation notes](docs/validation.md).
 
 To explore manually, run traffic in one terminal:
 

@@ -1,11 +1,11 @@
 # Roadmap
 
-## Status (2026-11-03)
+## Status (2026-11-21)
 
 | Milestone | Code | Runtime evidence |
 | --- | --- | --- |
-| 1. Monitoring lab + CPU experiment | Done (Stage 1) | **Pending**: no Docker run yet |
-| Network-path impairment (latency, timeout) | Done | **Pending**: no Docker run yet; promtool fixtures not yet executed |
+| 1. Monitoring lab + CPU experiment | Done (Stage 1) | First Docker run passed (1 run); two startup bugs fixed. Three repetitions still pending |
+| Network-path impairment (latency, timeout) | Done | Both passed on the first Docker run (1 run each); promtool fixtures pass |
 | 2. Read-only diagnosis: rules, LLM snapshot, LLM tools | Done, tested offline | Rules: none on live data. LLM modes: scripted provider only, no real-model calls |
 | Labelled evaluation pipeline | Done, tested against a simulated lab | **No results yet** |
 | 3. Defensive security experiments | Not started | — |
