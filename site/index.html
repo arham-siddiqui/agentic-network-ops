@@ -25,6 +25,14 @@
       <button class="btn" id="step-prev">◀</button>
       <div class="step-text" id="step-text"></div>
       <button class="btn primary" id="step-next">Next ▶</button>
+      <div class="toolbar playback">
+        <span class="note">speed</span>
+        <button data-speed="1" aria-pressed="true">1×</button>
+        <button data-speed="2" aria-pressed="false">2×</button>
+        <button data-speed="5" aria-pressed="false">5×</button>
+        <button id="pause">Pause</button>
+        <button id="reset">Reset</button>
+      </div>
     </section>
 
     <div class="row-top">
@@ -43,17 +51,9 @@
             <div class="fault-grid" id="fault-grid"></div>
             <div class="toolbar">
               <button class="btn stop" id="stop-fault" disabled>Stop fault</button>
+              <span class="error-msg" id="fault-error"></span>
             </div>
-            <div class="toolbar">
-              <span class="note">speed</span>
-              <button data-speed="1" aria-pressed="true">1×</button>
-              <button data-speed="2" aria-pressed="false">2×</button>
-              <button data-speed="5" aria-pressed="false">5×</button>
-              <button id="pause">Pause</button>
-              <button id="reset">Reset</button>
-            </div>
-            <div class="error-msg" id="fault-error"></div>
-            <p class="note">In the real lab, faults are injected only from the terminal (<code>make inject-network-fault</code>, <code>make inject-cpu-fault</code>) through Unix sockets; there is no HTTP fault endpoint and the investigator has no fault tools.</p>
+            <p class="note">The real lab takes faults only from the terminal (<code>make inject-network-fault</code>, <code>make inject-cpu-fault</code>) over Unix sockets. There is no HTTP fault endpoint, and the investigator has no fault tools.</p>
           </div>
 
           <div id="rec-controls" class="controls" hidden>

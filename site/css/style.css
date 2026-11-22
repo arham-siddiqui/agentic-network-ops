@@ -78,7 +78,10 @@ header.top h1 small { display: block; font-size: 13px; color: var(--muted); font
 }
 
 /* ---------- topology ---------- */
-#topology svg { width: 100%; height: auto; display: block; }
+#topology { display: flex; flex-direction: column; }
+#topology svg { width: 100%; height: auto; display: block; margin: auto 0; }
+.playback { border-left: 1px solid var(--border); padding-left: 10px; }
+@media (max-width: 900px) { .playback { border-left: 0; padding-left: 0; } }
 .node rect { fill: var(--surface-2); stroke: var(--axis); stroke-width: 1.5; rx: 10; }
 .node text { fill: var(--text); font: 600 15px var(--font); }
 .node .sub { fill: var(--muted); font: 400 12px var(--font); }
