@@ -87,6 +87,7 @@ services:
 
   api:
     <<: *app
+    networks: [lab, edge]
     environment:
       SERVICE: api
       WORKER_URL: http://impairment-proxy:8000
@@ -102,7 +103,7 @@ services:
     <<: *sandbox
     image: prom/prometheus:v3.15.0
     user: "65534:65534"
-    networks: [lab, control]
+    networks: [lab, control, edge]
     cpus: 0.5
     mem_limit: 256m
     command:
@@ -120,6 +121,10 @@ services:
     <<: *sandbox
     image: grafana/grafana:13.2.3
     user: "472:472"
+    networks: [lab, edge]
+    # Grafana starts one backend process per bundled plugin; the shared 64-PID (thread) cap
+    # made thread creation fail ("fatal error: newosproc") on first Docker run.
+    pids_limit: 512
     cpus: 0.5
     mem_limit: 256m
     environment:
@@ -174,6 +179,12 @@ networks:
   # Fault-control plane: proxy admin API, network fault controller, and Prometheus scrapes.
   control:
     internal: true
+  # Docker cannot publish ports from containers that are only on internal networks. This bridge
+  # carries the 127.0.0.1 port mappings for api, prometheus, and grafana; masquerade is off, so
+  # containers get no NAT for outbound traffic.
+  edge:
+    driver_opts:
+      com.docker.network.bridge.enable_ip_masquerade: "false"
 
 volumes:
   scenario-data:
