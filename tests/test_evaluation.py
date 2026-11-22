@@ -181,3 +181,17 @@ def test_scoring_keeps_abstentions_and_denominators_separate():
     assert result["root_cause_accuracy"] == pytest.approx(1 / 3)
     assert (result["false_incidents"], result["healthy_abstained"]) == (1, 1)
     assert score_mode([])["root_cause_accuracy"] is None
+
+
+def test_export_for_site_contains_only_captured_measurements(bundle_for, tmp_path):
+    from evaluation.export_site import export
+
+    run_all(tmp_path, FakeLab(bundle_for, fail_capture_for=("inject:cpu",)), reps=1)
+    data = export(tmp_path)
+    assert data["source"] == "recorded" and len(data["incidents"]) == 3
+    assert data["failed_trials"] == [
+        {"scenario": "cpu", "error": "RuntimeError: Prometheus query failed"}
+    ]
+    latency = next(i for i in data["incidents"] if i["scenario"] == "latency")
+    assert latency["reports"]["rules"]["predicted_cause"] == "network_latency"
+    assert latency["ground_truth"]["started_at"] and latency["bundle"]["series"]
