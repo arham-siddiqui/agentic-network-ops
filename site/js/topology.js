@@ -172,8 +172,10 @@ export class Topology {
     if (plan.stage === "ok") {
       forward(X.workerL);
       if (plan.heldMs > 0) {
-        legs.push({ ...span(X.workerL, X.proxyR + 8, LANE_BACK), dur: hop * 0.4, color: COLORS.reply });
-        back(X.proxyR + 8, COLORS.reply, plan.heldMs / 1000);
+        // Each held response gets its own slot beside the proxy; at most 4 are ever in flight.
+        const slot = X.proxyR + 10 + (request.id % 4) * 12;
+        legs.push({ ...span(X.workerL, slot, LANE_BACK), dur: hop * 0.4, color: COLORS.reply });
+        back(slot, COLORS.reply, plan.heldMs / 1000);
       } else {
         back(X.workerL, COLORS.reply);
       }
