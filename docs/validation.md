@@ -1,5 +1,27 @@
 # Validation record
 
+## 2026-11-21: first Docker runtime (colima)
+
+macOS 15.6.1 arm64; colima VM (vz, 4 vCPU, 6 GiB, Ubuntu 24.04), Docker Engine 29.5.2, Compose 5.8.0. These are the first container runs of this repository. Single runs are observations, not benchmarks.
+
+| Check | Observed result |
+| --- | --- |
+| `make check-rules` | Config valid; 6 rules found; all rule fixtures pass, including the network fixtures that had not been executed before. |
+| `make up` (first attempt) | **Failed.** Grafana exited with `fatal error: newosproc`: the shared 64-PID cap counts threads, and Grafana 13 starts one process per bundled plugin. Fixed with `pids_limit: 512` for Grafana (91 PIDs observed at idle). |
+| Published ports (first attempt) | **Not bound.** Docker does not publish ports for containers attached only to `internal: true` networks, so the Stage 1 localhost URLs never worked. Fixed with an `edge` bridge for API, Prometheus, and Grafana with IP masquerading disabled. Requests to `http://1.1.1.1` then failed from the API, worker, Prometheus, and Grafana containers. |
+| Grafana memory | 227 MiB of a 256 MiB limit after startup and a smoke test; the limit was raised to 384 MiB. |
+| `make up` / `curl /work` / `make smoke` (after fixes) | All six services healthy. `/work` returned a checksum through the proxy. Smoke passed, including the proxy path in both directions and fault-control endpoints unreachable from the `lab` network. The proxy admin binding to its control-network alias worked. |
+| CPU experiment (`demo.py --scenario cpu`, 1 run) | Passed. Worker CPU went from 0.011 cores at baseline to a peak sample of 0.476 against the 0.5 quota. `WorkerCpuPressure` was observed firing 22.1 s after injection; recovery was observed 6.0 s after expiry; start/end records paired (`duration_elapsed`). API p95 rose from about 5 ms to about 89 ms. |
+| Latency experiment (`demo.py --scenario latency`, 600 ms, 1 run) | Passed. `ApiHighLatency` was observed 24.2 s after injection; recovery 18.1 s after expiry; records paired. During the fault the API slow fraction was 1.0 and the worker's was 0.0. API p95 read 0.975 s, a histogram-bucket estimate within the 0.5–1 s bucket. |
+| Added latency per request | Four direct `curl` requests to `/work` during the fault took 0.603–0.608 s (one delay per request, not one per chunk or direction). One took 0.223 s; it coincided with the toxic's removal at 07:26:48.97 UTC, when Toxiproxy releases held data immediately. |
+| Throughput under latency | The API request rate fell from about 9.8 to 6.2 req/s because the load generator caps in-flight requests at 4. This is real backpressure, not a fault in the generator. |
+| Timeout experiment (`demo.py --scenario timeout`, 1 run) | Passed. `WorkerCallTimeouts` was observed 28.2 s after injection; recovery 16.1 s after expiry; records paired. The peak timeout share was 0.85 and the API 5xx fraction 0.84. Over the run, 116 requests returned 504 after 2.002–2.010 s (median 2.005 s), matching the API's 2 s worker timeout. |
+| Recovery artifact of the timeout toxic | Exactly 4 requests returned 502 at 07:30:25.140 UTC, 1 ms after the toxic was removed. Toxiproxy closes the connections a removed toxic affected, so the 4 in-flight requests (the load generator's concurrency) failed with `worker unavailable`. |
+| Latency histogram resolution | With buckets at only 1/2/5 s, the timed-out requests (about 2.005 s) were interpolated to a 4.8 s p95. Buckets at 0.75, 1.5, and 2.5 s were added; the change was rebuilt and verified on `/metrics`. Results recorded above used the old buckets. |
+| `make investigate` during the latency fault | Rules verdict: `network_latency`. Cited: API slow fraction 1.0, worker slow fraction 0.0, worker CPU 0.007 cores, all targets up. |
+| Error fraction with zero 5xx | The query returned an empty vector (no 5xx series exists yet), which the investigator treated as missing data. Fixed with `or on () vector(0)` on the numerator; idle traffic remains undefined. |
+| `scripts/live_bridge.py` against real Prometheus | Snapshot showed the CPU marker, `WorkerCpuPressure` firing, and worker CPU 0.37 cores during the CPU run; during the latency run it showed `ApiHighLatency` firing with API/worker slow fractions of 1.0/0.0. |
+
 ## 2026-11-03: network impairment slice (branch `feat/november-incident-diagnosis`)
 
 Run on macOS arm64 (12 CPUs, 24 GiB), CPython 3.12.13 via `uv`. **Docker is still not installed on this machine, so Milestone 0 (Compose startup, smoke test, CPU demo ×3) and all network-scenario runtime checks are blocked, not passed.**

@@ -20,7 +20,9 @@ class Metrics:
             "lab_http_request_duration_seconds",
             "HTTP response completion latency.",
             ["method", "route"],
-            buckets=(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5),
+            # 0.75/1.5/2.5 resolve the latency fault (~0.6 s) and the 2 s worker timeout; with only
+            # 1/2/5, timed-out requests at ~2.005 s were interpolated to a ~4.8 s p95.
+            buckets=(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 0.75, 1, 1.5, 2, 2.5, 5),
             registry=self.registry,
         )
         self.dependency = Counter(
