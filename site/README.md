@@ -15,7 +15,7 @@ Live: https://arham-siddiqui.github.io/agentic-network-ops/
 What is real and what is modeled in Simulation mode:
 
 - **Mirrors the repository:** topology and trust boundaries; load limits (10 req/s, ≤ 4 in flight); the API's 2 s worker timeout; fault kinds and bounds (1–120 s, latency 50–1500 ms, one fault at a time, automatic expiry); histogram buckets; every alert expression, window, threshold, and `for`; the catalogue queries; the rules decision tree.
-- **Assumed:** healthy service times (a few ms), process CPU baselines, and how much the CPU fault slows the worker (the real lab only guarantees that CPU rises). Packet animation is slowed for visibility. Fault delays are drawn at real scale. The "worker down" and "proxy down" scenarios are simulation-only: the real lab has no controller for them.
+- **Assumed:** healthy service times (a few ms), process CPU baselines, and how much the CPU fault slows the worker (the real lab only guarantees that CPU rises). Packet animation is slowed for visibility. Fault delays are drawn at real scale. "Proxy down" is simulation-only; "worker down" also exists in the real lab (`make worker-outage`).
 
 One emergent effect worth pointing out while presenting: because the load generator caps in-flight requests at 4, slow or timing-out responses reduce throughput. The request-rate panel dips during latency and timeout faults, and alerts take a little longer to cross their thresholds than a constant-rate estimate suggests.
 
@@ -38,7 +38,8 @@ Deep links (handy for presenting):
 ## Tweak it
 
 - **Numbers:** every tunable value is in `js/config.js`. Values marked *lab* mirror the repo; values marked *model* are assumptions. Examples: healthy service time, CPU-fault slowdown, chart window, packet speed.
-- **Colors and layout:** `css/style.css`. The chart series colors (API blue `#3987e5`, worker orange `#d95926`) were checked for color-vision deficiency on the dark surface.
+- **Colors and layout:** `css/style.css`. API is blue (`#4c95ea`) and worker orange (`#e0703c`) throughout.
+- **Layout:** the main view is deliberately small: the topology hero with one row of fault buttons, three story tiles (user impact, alerts, diagnosis), and three charts (p95 API vs worker, API→worker call outcomes, worker CPU). Everything else (more charts, every alert rule, the full investigator report and evidence, the event log, security boundaries, and an explanation of the mode) sits in collapsed sections below. Speed and pause are in the header; fault duration and the simulation-only "proxy down" are under *Options*.
 - **Presenter steps:** the `STEPS` array in `js/app.js`.
 - **Rules port:** `js/rules.js` must stay in step with `agent/rules_baseline.py`; the Python code is the source of truth.
 

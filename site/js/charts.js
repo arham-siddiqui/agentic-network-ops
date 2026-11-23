@@ -1,7 +1,7 @@
 // Small canvas line chart: hairline grid, 2px lines, direct end labels, threshold rules, a
 // ground-truth band, and a crosshair tooltip. Null values are gaps, never zero.
 
-const INK = { text: "#f0efec", text2: "#c3c2b7", muted: "#898781", grid: "#2c2c2a", axis: "#383835", surface: "#1a1a19" };
+const INK = { text: "#f2f2f0", text2: "#c4c5c0", muted: "#8d8f8a", grid: "#26272a", axis: "#3a3c40", surface: "#17181b" };
 
 export const FORMAT = {
   rate: (v) => `${v.toFixed(1)}/s`,
@@ -73,7 +73,7 @@ export class LineChart {
     ctx.clearRect(0, 0, w, h);
     if (!d) return;
 
-    const pad = { l: 46, r: 64, t: 10, b: 22 };
+    const pad = { l: 52, r: 70, t: 16, b: 24 };
     const pw = w - pad.l - pad.r;
     const ph = h - pad.t - pad.b;
     const fmt = FORMAT[this.spec.unit];
@@ -92,17 +92,17 @@ export class LineChart {
       ctx.fillStyle = "rgba(250,178,25,0.10)";
       ctx.fillRect(x(a), pad.t, x(b) - x(a), ph);
       ctx.fillStyle = INK.muted;
-      ctx.font = "11px system-ui, sans-serif";
+      ctx.font = "12px system-ui, sans-serif";
       ctx.textAlign = "left";
-      if (x(b) - x(a) > 70) ctx.fillText("fault (ground truth)", x(a) + 4, pad.t + 11);
+      if (x(b) - x(a) > 90) ctx.fillText("fault (ground truth)", x(a) + 6, pad.t + 12);
     }
 
     // grid + y labels
-    ctx.font = "11px system-ui, sans-serif";
+    ctx.font = "12px system-ui, sans-serif";
     ctx.textAlign = "right";
     ctx.textBaseline = "middle";
-    for (let i = 0; i <= 4; i++) {
-      const v = (yMax * i) / 4;
+    for (let i = 0; i <= 3; i++) {
+      const v = (yMax * i) / 3;
       const yy = Math.round(y(v)) + 0.5;
       ctx.strokeStyle = i === 0 ? INK.axis : INK.grid;
       ctx.lineWidth = 1;
@@ -119,6 +119,8 @@ export class LineChart {
     const span = d.t1 - d.t0;
     for (let s = 0; s <= span; s += 60) {
       const t = d.t1 - s;
+      // The end label is right-aligned so it never collides with the series end labels.
+      ctx.textAlign = s === 0 ? "right" : "center";
       ctx.fillText(s === 0 ? (d.endLabel ?? "now") : `−${s / 60}m`, x(t), pad.t + ph + 6);
     }
 
@@ -143,7 +145,7 @@ export class LineChart {
     for (const s of this.spec.series) {
       const values = d.series[s.key] ?? [];
       ctx.strokeStyle = s.color;
-      ctx.lineWidth = 2;
+      ctx.lineWidth = 2.5;
       ctx.lineJoin = "round";
       ctx.beginPath();
       let pen = false;
@@ -197,7 +199,7 @@ export class LineChart {
         if (v !== null) {
           ctx.fillStyle = s.color;
           ctx.strokeStyle = INK.surface;
-          ctx.lineWidth = 2;
+          ctx.lineWidth = 2.5;
           ctx.beginPath();
           ctx.arc(px, y(v), 4.5, 0, Math.PI * 2);
           ctx.fill();

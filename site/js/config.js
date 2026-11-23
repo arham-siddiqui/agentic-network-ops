@@ -29,7 +29,7 @@ export const CONFIG = {
   prometheus: { scrapeIntervalS: 2, evalIntervalS: 2, retentionS: 600 },
 
   // Histogram buckets (lab: lab/metrics.py)
-  buckets: [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5],
+  buckets: [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 0.75, 1, 1.5, 2, 2.5, 5],
 
   // Alert rules (lab: monitoring/alerts.yml)
   alerts: {
