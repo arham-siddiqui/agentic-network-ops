@@ -30,7 +30,7 @@ This is a local development lab. The threat model covers what the lab and its re
 | Investigator tools | Nine `get_*` tools, all reads over the already-captured bundle. No shell, Docker, restart, firewall, routing, or fault tools exist. Tool arguments are validated, and invalid or unknown calls return an error result. The budgets are 6 calls, 30 s, and 60,000 tokens. |
 | Untrusted text | Alert names must match `[A-Za-z][A-Za-z0-9_]{0,63}`; anything else is dropped. Telemetry is wrapped in data tags, and the system prompt says it is data, not instructions. The output is a schema-checked JSON report whose `action_taken` is always `false`. The report is advisory, never an authorization decision. |
 | Ground truth | Fault markers, the controller's job, toxic state, and scenario records are absent from the catalogue. Tests check that bundles, prompts, and tool definitions contain none of these tokens. Labels are written only to evaluator files. |
-| Credentials | Resolved by the Anthropic SDK from the host environment (`ANTHROPIC_API_KEY` or an `ant auth login` profile). Never read, logged, or stored by project code. Run metadata excludes prompt text. `.env` and `artifacts/` are git-ignored. |
+| Credentials | No model credentials are used on this branch. `.env` and `artifacts/` are git-ignored. A future LLM agent must read keys from the host environment only, never from files in the repository, prompts, or artifacts. |
 
 ## Residual risk
 

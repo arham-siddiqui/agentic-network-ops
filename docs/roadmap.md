@@ -7,7 +7,8 @@
 | 1. Monitoring lab + CPU experiment | Done (Stage 1) | First Docker run passed (1 run); two startup bugs fixed. Three repetitions still pending |
 | Network-path impairment (latency, timeout) | Done | Both passed on the first Docker run (1 run each); promtool fixtures pass |
 | 2. Read-only diagnosis: tools interface, rules baseline, report schema 1.1 | Done | Tools checked against the live lab, including during a worker outage; rules correct on the first real evaluation |
-| Experimental LLM modes (optional extra) | Exists from the November milestone | Scripted provider only; no real-model calls. Next stage moves them onto the live tools or replaces them |
+| Experimental LLM modes | Moved to the `llm-modes` branch | Scripted provider only; no real-model calls |
+| Next: LLM agent on `LabTools` | Not started | Needs model access (API key or a local model); scored with the existing evaluator |
 | Labelled evaluation pipeline (incl. worker outage) | Done | 15 valid real trials: rules 12/12 faults, 0/3 healthy misdiagnosed (2 sleep-affected trials excluded and re-run) |
 | 3. Defensive security experiments | Not started | — |
 | 4. Constrained remediation | Not started | — |

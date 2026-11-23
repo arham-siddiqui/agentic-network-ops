@@ -1,7 +1,7 @@
 """Labelled trials, diagnosis on saved bundles, and scoring.
 
   python -m evaluation.run trials --reps 3              # run trials, diagnose with rules, score
-  python -m evaluation.run diagnose RUN_DIR --modes llm_snapshot,llm_tools
+  python -m evaluation.run diagnose RUN_DIR --modes rules
   python -m evaluation.run score RUN_DIR
 
 Layout of RUN_DIR (under ignored artifacts/evaluation/):
@@ -24,8 +24,6 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from agent.investigator import investigate_snapshot, investigate_with_tools
-from agent.llm_provider import DEFAULT_MODEL, AnthropicProvider, ProviderError
 from agent.reporting import check_evidence
 from agent.rules_baseline import diagnose as rules_diagnose
 from agent.schemas import EvidenceBundle, IncidentReport
@@ -34,7 +32,7 @@ from evaluation.scoring import infrastructure, score
 from evaluation.summarize import write_summary
 
 ROOT = Path(__file__).resolve().parents[1]
-MODES = ("rules", "llm_snapshot", "llm_tools")
+MODES = ("rules",)  # LLM modes live on the llm-modes branch
 
 
 @dataclass(frozen=True)
@@ -183,7 +181,7 @@ def run_trials(lab, names, reps: int, seed: int, run_dir: Path, settings: Settin
     return trials
 
 
-def diagnose_bundles(bundle_dir: Path, out_dir: Path, modes, model=DEFAULT_MODEL, provider=None):
+def diagnose_bundles(bundle_dir: Path, out_dir: Path, modes):
     """Reads only agent-visible bundles; ground truth is not available to this function."""
     for path in sorted(bundle_dir.glob("*.json")):
         bundle = EvidenceBundle.model_validate_json(path.read_text())
@@ -192,14 +190,8 @@ def diagnose_bundles(bundle_dir: Path, out_dir: Path, modes, model=DEFAULT_MODEL
             if target.exists():
                 continue  # predictions are written once and never rewritten
             started = time.monotonic()
-            if mode == "rules":
-                report, info = rules_diagnose(bundle), {}
-                info["latency_seconds"] = time.monotonic() - started
-            else:
-                if provider is None:
-                    provider = AnthropicProvider(model)
-                run = investigate_snapshot if mode == "llm_snapshot" else investigate_with_tools
-                report, info = run(bundle, provider)
+            report = rules_diagnose(bundle)
+            info = {"latency_seconds": time.monotonic() - started}
             _write(target, report)
             _write(target.with_suffix(".run.json"), info)
 
@@ -272,14 +264,12 @@ def main() -> None:
     cmd.add_argument("--reps", type=int, choices=range(1, 11), default=3)
     cmd.add_argument("--seed", type=int, default=20261103)
     cmd.add_argument("--modes", default="rules")
-    cmd.add_argument("--model", default=DEFAULT_MODEL)
     cmd.add_argument(
         "--prometheus-url", default=f"http://127.0.0.1:{os.getenv('PROMETHEUS_PORT', '9090')}"
     )
     cmd = sub.add_parser("diagnose")
     cmd.add_argument("run_dir", type=Path)
-    cmd.add_argument("--modes", required=True)
-    cmd.add_argument("--model", default=DEFAULT_MODEL)
+    cmd.add_argument("--modes", default="rules")
     cmd = sub.add_parser("score")
     cmd.add_argument("run_dir", type=Path)
     args = parser.parse_args()
@@ -301,10 +291,7 @@ def main() -> None:
     else:
         run_dir = args.run_dir
     if args.command in ("trials", "diagnose"):
-        try:
-            diagnose_bundles(run_dir / "bundles", run_dir / "predictions", modes, args.model)
-        except ProviderError as exc:
-            raise SystemExit(f"LLM mode unavailable: {exc}") from exc
+        diagnose_bundles(run_dir / "bundles", run_dir / "predictions", modes)
     scores = score_run(run_dir)
     for mode, result in scores.items():
         print(

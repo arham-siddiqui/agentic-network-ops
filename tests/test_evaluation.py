@@ -3,11 +3,9 @@ from datetime import timedelta
 
 import pytest
 from conftest import END, firing
-from test_investigator import answer, turn
 from test_rules_baseline import CPU, LATENCY, TIMEOUT
 
 from agent.catalog import FORBIDDEN_TOKENS
-from agent.llm_provider import ScriptedProvider
 from evaluation import run as evaluation
 from evaluation.scenarios import SCENARIOS
 from evaluation.scoring import score_mode
@@ -78,12 +76,10 @@ class FakeLab:
         return SCENARIOS[last.split(":")[1]].label
 
 
-def run_all(tmp_path, lab, reps=2, modes=("rules",), provider=None):
+def run_all(tmp_path, lab, reps=2, modes=("rules",)):
     names = ["healthy", "cpu", "latency", "timeout"]
     trials = evaluation.run_trials(lab, names, reps, 7, tmp_path, evaluation.Settings())
-    evaluation.diagnose_bundles(
-        tmp_path / "bundles", tmp_path / "predictions", modes, provider=provider
-    )
+    evaluation.diagnose_bundles(tmp_path / "bundles", tmp_path / "predictions", modes)
     return trials, evaluation.score_run(tmp_path)
 
 
@@ -141,31 +137,6 @@ def test_predictions_are_never_rewritten(bundle_for, tmp_path, monkeypatch):
     evaluation.diagnose_bundles(tmp_path / "bundles", tmp_path / "predictions", ["rules"])
     after = {p.name: p.read_text() for p in (tmp_path / "predictions" / "rules").glob("*.json")}
     assert before == after
-
-
-def test_llm_mode_runs_on_the_same_bundles(bundle_for, tmp_path):
-    lab = FakeLab(bundle_for)
-    run_all(tmp_path, lab, reps=1)
-    bundles = sorted((tmp_path / "bundles").glob("*.json"))
-    from agent.schemas import EvidenceBundle
-
-    turns = [
-        turn(
-            answer(EvidenceBundle.model_validate_json(p.read_text()), cause="unknown_or_ambiguous")
-        )
-        for p in bundles
-    ]
-    evaluation.diagnose_bundles(
-        tmp_path / "bundles",
-        tmp_path / "predictions",
-        ["llm_snapshot"],
-        provider=ScriptedProvider(turns),
-    )
-    scores = evaluation.score_run(tmp_path)
-    llm = scores["llm_snapshot"]
-    assert llm["n_scored"] == 4 and llm["abstained"] == 3 and llm["healthy_abstained"] == 1
-    assert llm["input_tokens"] == 4 * 1200 and llm["estimated_cost_usd"] > 0
-    assert scores["rules"]["n_scored"] == 4  # both modes scored on identical bundles
 
 
 def test_scoring_keeps_abstentions_and_denominators_separate():

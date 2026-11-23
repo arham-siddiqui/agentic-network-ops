@@ -15,7 +15,7 @@ down:
 clean:
 	docker compose down -v
 test:
-	uv run --frozen --all-extras pytest -q
+	uv run --frozen pytest -q
 lint:
 	uv run --frozen ruff check .
 check-rules:
@@ -53,17 +53,14 @@ network-demo:
 # Read-only: captures allowlisted telemetry from the local Prometheus and writes a report.
 investigate:
 	uv run --frozen python -m agent.cli investigate --lookback 120
-# Labelled trials (healthy, cpu, latency, timeout x REPS, ~2.5 min each), rules diagnosis, scoring.
+# Labelled trials (healthy, cpu, latency, timeout, worker_down x REPS, ~3.3 min each).
+# On macOS, wrap long runs in `caffeinate -dims`: host sleep corrupts trial timings.
 REPS ?= 3
 evaluate:
 	uv run --frozen python -m evaluation.run trials --reps $(REPS)
-# RUN=artifacts/evaluation/<timestamp>; add MODES=llm_snapshot,llm_tools to diagnose with an LLM first.
+# Re-score a saved run: make evaluate-score RUN=artifacts/evaluation/<timestamp>
 evaluate-score:
-ifdef MODES
-	uv run --frozen --extra llm python -m evaluation.run diagnose $(RUN) --modes $(MODES)
-else
 	uv run --frozen python -m evaluation.run score $(RUN)
-endif
 # Demo site with a read-only live view of the running lab (http://127.0.0.1:8088).
 live-demo:
 	python3 -m scripts.live_bridge

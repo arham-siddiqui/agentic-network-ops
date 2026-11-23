@@ -32,7 +32,7 @@ On macOS, run long evaluations under `caffeinate -dims`: host sleep stalls trial
 
 - Bundles contain only the 21 catalogue series and firing alert names. Their file names are opaque random IDs. Tests check that no label, scenario name, run ID, fault marker, or toxic name appears in a bundle.
 - Labels, parameters, scenario JSONL records, and timings are written only to `ground_truth/`.
-- `diagnose_bundles` receives only the bundle directory. The rules and every LLM mode read the same saved bundles, so they see identical evidence.
+- `diagnose_bundles` receives only the bundle directory. Every diagnosis mode reads the same saved bundles, so modes added later (such as an LLM agent) see identical evidence.
 - A prediction is written once and never rewritten. Scoring joins predictions with labels only afterwards.
 - Failed trials stay in the results: they count in `n_trials` and `n_failed_trials` for every mode.
 
@@ -45,9 +45,8 @@ On macOS, run long evaluations under `caffeinate -dims`: host sleep stalls trial
 | Wrong cause | A different modeled cause on a fault trial. |
 | Affected service correct | The report's `affected_service` equals the scenario's ground-truth service, over all scored trials, healthy controls included. |
 | Healthy misdiagnosed | A fault cause predicted on a healthy control. Abstaining on a healthy control is counted separately (`healthy_abstained`). |
-| Evidence supported | The report cites at least one metric, and every cited value matches the bundle (5% relative or 0.005 absolute tolerance, units must match). In `llm_tools` mode, every cited metric must also have been retrieved through a tool. |
+| Evidence supported | The report cites at least one metric, and every cited value matches the bundle (5% relative or 0.005 absolute tolerance, units must match). |
 | Median diagnosis seconds | Time to produce a schema-valid report from a saved bundle. It excludes capture and the decision delay. |
-| Tokens / estimated cost | Summed from API usage for LLM modes, priced from the list prices in `agent/llm_provider.py`. These are estimates. |
 | Detection seconds | First ALERTS sample of the expected alert minus the ground-truth start. The 5-second bundle step limits its resolution, and it only counts if the alert fired before the decision time. |
 | Recovery seconds | From observed fault expiry until the recovery condition holds, polled every 2 seconds. The investigator repairs nothing, so recovery is never credited to it. |
 
@@ -55,12 +54,7 @@ On macOS, run long evaluations under `caffeinate -dims`: host sleep stalls trial
 
 `artifacts/evaluation/<UTC timestamp>/` (ignored by Git) holds `manifest.json`, `bundles/`, `ground_truth/`, `predictions/<mode>/`, `records.jsonl`, `summary.csv`, and `summary.md`. The latest summary is also copied to `artifacts/evaluation-summary.{csv,md}`. The manifest records the commit, whether the working tree was dirty, Docker and Compose versions, Docker CPU and memory, image tags, per-service limits, load settings, timings, seed, and trial order.
 
-LLM modes can be added later on the same bundles without re-running trials:
-
-```sh
-uv sync --frozen --extra llm
-make evaluate-score RUN=artifacts/evaluation/<timestamp> MODES=llm_snapshot,llm_tools
-```
+A future diagnosis mode can be scored on the same saved bundles without re-running trials, by adding it to `diagnose_bundles` and running `make evaluate-score RUN=...`.
 
 ## Limits of the design
 
