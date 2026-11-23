@@ -93,6 +93,7 @@ function setMode(kind, next) {
   $("speed").hidden = kind !== "simulation";
   $("pause").hidden = kind !== "simulation";
   $("run-inv").hidden = kind === "recorded";
+  $("topology").classList.toggle("no-packets", kind !== "simulation");
   topology.clear();
   logEl.innerHTML = "";
   loggedEvents = 0;

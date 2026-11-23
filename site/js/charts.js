@@ -119,6 +119,8 @@ export class LineChart {
     const span = d.t1 - d.t0;
     for (let s = 0; s <= span; s += 60) {
       const t = d.t1 - s;
+      // The end label is right-aligned so it never collides with the series end labels.
+      ctx.textAlign = s === 0 ? "right" : "center";
       ctx.fillText(s === 0 ? (d.endLabel ?? "now") : `−${s / 60}m`, x(t), pad.t + ph + 6);
     }
 

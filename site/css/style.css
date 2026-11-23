@@ -78,6 +78,7 @@ header.top h1 { font-size: 24px; margin: 0; font-weight: 700; letter-spacing: -0
 .badge.critical text { fill: #fff; }
 .packet { stroke: var(--surface); stroke-width: 1.5; }
 .legend-text { fill: var(--muted); font: 13px var(--font); }
+.no-packets .legend { display: none; }
 
 /* ---------- control bar ---------- */
 .bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; border-top: 1px solid var(--border); padding-top: 16px; }
