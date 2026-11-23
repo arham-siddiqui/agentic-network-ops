@@ -38,6 +38,24 @@ def main():
         for service in ("api", "worker"):
             wait_until(lambda s=service: get(f"http://{s}:8000/health")["status"] == "ok")
         wait_until(lambda: len(query('up{job=~"api|worker"} == 1')) == 2)
+        control_up = 'up{job=~"impairment-proxy|network-fault-controller"} == 1'
+        wait_until(lambda: len(query(control_up)) == 2)
+
+        def unreachable(url):
+            try:
+                client.get(url, timeout=2)
+            except httpx.TransportError:
+                return True
+            return False
+
+        # The lab network (where this container, the API, and the worker live) must not reach
+        # the proxy admin API or the network fault controller.
+        for url in (
+            "http://impairment-proxy:8474/proxies",
+            "http://proxy-admin:8474/proxies",
+            "http://network-fault-controller:9101/metrics",
+        ):
+            assert unreachable(url), f"fault-control endpoint reachable from lab network: {url}"
         get("http://api:8000/work")
         wait_until(lambda: len(query('lab_http_requests_total{route="/work",status="200"}')) == 2)
         for _ in range(30):
@@ -49,6 +67,9 @@ def main():
             'process_resident_memory_bytes{job=~"api|worker"}',
             "histogram_quantile(0.95, sum by (job, le) "
             '(rate(lab_http_request_duration_seconds_bucket{route="/work"}[30s])))',
+            # Healthy-mode traffic really traverses the proxy in both directions.
+            "sum by (direction) "
+            '(rate(toxiproxy_proxy_sent_bytes_total{proxy="api_to_worker"}[30s])) > 0',
         ):
 
             def measured(expression=expr):
@@ -63,7 +84,7 @@ def main():
                 auth=auth,
             )
         )
-        assert len(dashboard["dashboard"]["panels"]) == 10
+        assert len(dashboard["dashboard"]["panels"]) == 12
         wait_until(
             lambda: (
                 get(
@@ -80,6 +101,8 @@ def main():
                     "services_up": 2,
                     "dashboard_uid": "local-lab",
                     "process_metrics": True,
+                    "proxy_path": True,
+                    "fault_control_isolated": True,
                 }
             )
         )

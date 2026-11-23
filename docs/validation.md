@@ -1,5 +1,65 @@
 # Validation record
 
+## 2026-11-21: first Docker runtime (colima)
+
+macOS 15.6.1 arm64; colima VM (vz, 4 vCPU, 6 GiB, Ubuntu 24.04), Docker Engine 29.5.2, Compose 5.8.0. These are the first container runs of this repository. Single runs are observations, not benchmarks.
+
+| Check | Observed result |
+| --- | --- |
+| `make check-rules` | Config valid; 6 rules found; all rule fixtures pass, including the network fixtures that had not been executed before. |
+| `make up` (first attempt) | **Failed.** Grafana exited with `fatal error: newosproc`: the shared 64-PID cap counts threads, and Grafana 13 starts one process per bundled plugin. Fixed with `pids_limit: 512` for Grafana (91 PIDs observed at idle). |
+| Published ports (first attempt) | **Not bound.** Docker does not publish ports for containers attached only to `internal: true` networks, so the Stage 1 localhost URLs never worked. Fixed with an `edge` bridge for API, Prometheus, and Grafana with IP masquerading disabled. Requests to `http://1.1.1.1` then failed from the API, worker, Prometheus, and Grafana containers. |
+| Grafana memory | 227 MiB of a 256 MiB limit after startup and a smoke test; the limit was raised to 384 MiB. |
+| `make up` / `curl /work` / `make smoke` (after fixes) | All six services healthy. `/work` returned a checksum through the proxy. Smoke passed, including the proxy path in both directions and fault-control endpoints unreachable from the `lab` network. The proxy admin binding to its control-network alias worked. |
+| CPU experiment (`demo.py --scenario cpu`, 1 run) | Passed. Worker CPU went from 0.011 cores at baseline to a peak sample of 0.476 against the 0.5 quota. `WorkerCpuPressure` was observed firing 22.1 s after injection; recovery was observed 6.0 s after expiry; start/end records paired (`duration_elapsed`). API p95 rose from about 5 ms to about 89 ms. |
+| Latency experiment (`demo.py --scenario latency`, 600 ms, 1 run) | Passed. `ApiHighLatency` was observed 24.2 s after injection; recovery 18.1 s after expiry; records paired. During the fault the API slow fraction was 1.0 and the worker's was 0.0. API p95 read 0.975 s, a histogram-bucket estimate within the 0.5–1 s bucket. |
+| Added latency per request | Four direct `curl` requests to `/work` during the fault took 0.603–0.608 s (one delay per request, not one per chunk or direction). One took 0.223 s; it coincided with the toxic's removal at 07:26:48.97 UTC, when Toxiproxy releases held data immediately. |
+| Throughput under latency | The API request rate fell from about 9.8 to 6.2 req/s because the load generator caps in-flight requests at 4. This is real backpressure, not a fault in the generator. |
+| Timeout experiment (`demo.py --scenario timeout`, 1 run) | Passed. `WorkerCallTimeouts` was observed 28.2 s after injection; recovery 16.1 s after expiry; records paired. The peak timeout share was 0.85 and the API 5xx fraction 0.84. Over the run, 116 requests returned 504 after 2.002–2.010 s (median 2.005 s), matching the API's 2 s worker timeout. |
+| Recovery artifact of the timeout toxic | Exactly 4 requests returned 502 at 07:30:25.140 UTC, 1 ms after the toxic was removed. Toxiproxy closes the connections a removed toxic affected, so the 4 in-flight requests (the load generator's concurrency) failed with `worker unavailable`. |
+| Latency histogram resolution | With buckets at only 1/2/5 s, the timed-out requests (about 2.005 s) were interpolated to a 4.8 s p95. Buckets at 0.75, 1.5, and 2.5 s were added; the change was rebuilt and verified on `/metrics`. Results recorded above used the old buckets. |
+| CPU experiment ×3 (`python3 scripts/demo.py --runs 3`) | 3 of 3 passed. Baseline worker CPU 0.011–0.013 cores; peak samples 0.476–0.483 against the 0.5 quota. `WorkerCpuPressure` observed 22.1–22.2 s after injection; recovery observed 6.0–8.1 s after expiry (CPU 0.165–0.197 at the recovery check); every run had a paired start/end record with `duration_elapsed`. |
+| Early stop | `make inject-cpu-fault DURATION=30` then `make stop-fault`: end record `reason: stopped` about 1 s after start. The same for `make inject-network-fault DURATION=30` then `make stop-network-fault`: `lab_latency` toxic present while active; after the stop `proxy_toxics: []` and the end record says `stopped`. |
+| Grafana panels | Each of the 12 panels' queries was run through Grafana's own `/api/ds/query` with the provisioned data source over the last 10 minutes; every panel returned data (2–4 series each). This checks queries and provisioning, not visual rendering. |
+| Prometheus coverage | Both services report CPU (`process_cpu_seconds_total`), RSS, request rate, latency histograms, error counts, and worker-call outcomes; checked through `agent.tools` and the integration tests. |
+| `make integration` (read-only tools against the live lab) | 7 passed: `up` for api/worker/proxy; API CPU, RSS, p95 latency, request rate, and error fraction all `ok` (0 errors reported as 0); api and worker logs structured with no ground-truth tokens; alerts API responding. It ran while a CPU experiment was in progress and added 30 requests. |
+| Ground-truth leakage in logs | The worker's stdout contains the CPU fault's `scenario_start`/`scenario_end` JSON (with `run_id`). Over a 120 s window, `get_service_logs('worker')` read 1,097 lines, returned 1,095 request records, and dropped exactly those 2 lines. |
+| Worker outage (`demo.py --scenario worker_down`, 60 s, 1 run) | Passed. The worker was stopped at 07:51:14.95 UTC; `ServiceUnavailable{job="worker"}` was observed 14.1 s later (Prometheus `activeAt` 07:51:17, then 10 s `for`); `ApiHighErrorRate` also fired. The API returned fast 502s (about 4 ms) while the worker was down: 201 of 416 requests in one 60 s window. The worker restarted automatically at 07:52:15 and was healthy; full recovery, including the error-rate alert clearing, was observed 28.2 s after restart. Records paired with `duration_elapsed`. |
+| Tools during the outage | `get_active_alerts` listed both firing alerts; `get_service_metrics('worker')` reported `up` = 0, CPU/RSS `stale`, status `partial`; `get_service_logs('worker')` returned `shutting_down`, `shutdown_complete`, and `process_finished` at the stop time. Rate-based worker series kept reporting their last 30 s window for a short time after the target died, so a reader must check `up` as well. |
+| Full labelled evaluation (`make evaluate REPS=3`, 5 scenarios) | 15 of 15 trials captured. The host Mac slept during two of them: a timeout trial took 10 min instead of about 3, with a recorded 300 s alert delay, and a CPU trial took 68 min. Its evidence was stale, so the rules abstained, correctly. `pmset` logs confirm sleep/wake in that window. Both were excluded (kept in `excluded.json` with the reason) and re-run once each under `caffeinate`, with normal timings (detection 35.0 s / 20.0 s). |
+| Combined result: 15 valid trials (`artifacts/evaluation/final-2026-11-22`) | Rules: 12/12 fault windows correct, 0 abstained, 0/3 healthy controls misdiagnosed; affected service 15/15; evidence matched the bundle in 15/15. The expected alert was seen by decision time in every fault trial. Median detection: cpu 20.0 s, latency 24.9 s, timeout 30.0 s, worker_down 15.0 s. Median recovery: cpu 6.0 s, latency 20.0 s, timeout 20.7 s, worker_down 26.1 s. Three trials per class is smoke-level evidence, and the rules share the alert thresholds, so near-perfect scores on clean single faults are expected; they are not evidence of general diagnostic accuracy. |
+| Final checks after the evaluation | `make test` 171 passed (7 integration tests skipped by default); `make lint` and format check clean; site node tests 11/11; `make check-rules` passed; `make smoke` passed; `make integration` 7 passed; `/health`, `/metrics`, `/work` returned 200. |
+| LLM modes moved to `llm-modes` (2026-11-22) | Removed from this branch together with the optional `anthropic` dependency; the earlier LLM test results apply to that branch. Here, after the move: `make test` 148 passed (7 integration skipped), `make lint` clean. |
+| `make investigate` during the latency fault | Rules verdict: `network_latency`. Cited: API slow fraction 1.0, worker slow fraction 0.0, worker CPU 0.007 cores, all targets up. |
+| Error fraction with zero 5xx | The query returned an empty vector (no 5xx series exists yet), which the investigator treated as missing data. Fixed with `or on () vector(0)` on the numerator; idle traffic remains undefined. |
+| `scripts/live_bridge.py` against real Prometheus | Snapshot showed the CPU marker, `WorkerCpuPressure` firing, and worker CPU 0.37 cores during the CPU run; during the latency run it showed `ApiHighLatency` firing with API/worker slow fractions of 1.0/0.0. |
+
+## 2026-11-03: network impairment slice (branch `feat/november-incident-diagnosis`)
+
+Run on macOS arm64 (12 CPUs, 24 GiB), CPython 3.12.13 via `uv`. **Docker is still not installed on this machine, so Milestone 0 (Compose startup, smoke test, CPU demo ×3) and all network-scenario runtime checks are blocked, not passed.**
+
+| Check | Observed result |
+| --- | --- |
+| `uv run --frozen pytest -q` before changes | 37 passed (same Starlette deprecation warning). |
+| `uv run --frozen pytest -q` after the network slice | 63 passed. New: network toxic bounds, fixed toxic definitions, apply/expiry/early-stop/idempotent stop, stale-toxic refusal and clearing, misconfigured and unreachable proxy, revert retry and `cleanup_failed`, startup reconcile, unknown request fields, a slow revert, and demo/alert-rule consistency. All run against an in-memory fake of the Toxiproxy admin API. |
+| `ruff check .` / `ruff format --check .` | Passed. |
+| YAML parse of `compose.yaml`, `monitoring/*.yml` | Parsed. Resolved service networks, users, read-only roots, dropped capabilities, and CPU/memory limits inspected for all eight services. This is not `docker compose config`. |
+| `promtool test rules` for the new `ApiHighLatency`, `WorkerCallTimeouts`, and `ImpairmentProxyUnavailable` fixtures | **Not executed.** promtool needs Docker (`make check-rules`) or a native binary; downloading one was not permitted in this session. Run `make check-rules` first once Docker is available. |
+| Toxiproxy behavior | **Not executed.** Admin endpoints, error codes, toxic semantics (`latency` holds each chunk; `timeout` with 0 drops data and keeps the connection open; removal closes affected links), the `-host`/`-proxy-metrics` flags, metric names and labels, and the scratch-based image contents were read from the v2.13.0 source and release configuration. |
+
+### Investigator and evaluation slices (same day, same machine)
+
+| Check | Observed result |
+| --- | --- |
+| `make test` (`uv run --frozen --all-extras pytest -q`) | 132 passed. Investigator: catalogue allowlist and leakage, loopback-only source, bounded lookback, NaN/absent/stale/sparse/unavailable handling, untrusted alert labels, and each rules verdict, including fail-closed cases and the documented CPU/network overlap. LLM: scripted provider for valid, invalid, out-of-range, refused, and provider-error outputs, wrong citations, unretrieved citations, unlisted or malicious tool calls, and tool/wall/token budgets; the Anthropic request shape is checked against a fake client. Evaluation: end-to-end against a fake lab, label-free bundles, seeded order, failed-trial retention and cleanup, write-once predictions, scoring denominators. |
+| `uv run --frozen python -m agent.cli investigate` with no Prometheus running | Saved an `unknown_or_ambiguous` report with the limitation "Prometheus was unavailable" (fails closed, not healthy). A non-loopback `--prometheus-url` was refused. |
+| `ruff check .` / `ruff format --check .` | Passed. |
+| Anthropic SDK | `anthropic` 1.17.0 installed as the optional `llm` extra. **No API request was made**, so real-model behavior, latency, token use, and cost are unmeasured. |
+
+Remaining runtime checks, in order: `make check-rules`; `make up`; `make smoke`, which now also requires proxy and controller scrapes, traffic through the proxy in both directions, and the fault-control endpoints being *unreachable* from the lab network. Then `python3 scripts/demo.py --scenario latency --runs 3` and `--scenario timeout --runs 3`. Also check that the measured added latency per request roughly equals `LATENCY_MS` rather than a multiple of it, and record any 502s seen as the timeout toxic is removed. Then run `make investigate` during each fault, `make evaluate`, and only then, if wanted and approved, `make evaluate-score RUN=... MODES=llm_snapshot,llm_tools`, which makes billed model calls.
+
+## 2026-10-09: initial Stage 1 checks
+
 Initial checks ran on 2026-10-09 on macOS arm64, using CPython 3.12.13. Docker was not installed. **Container startup, Grafana runtime behavior, and the actual CPU-pressure demonstration remain unverified.** Stage 1 acceptance is pending those checks; the presence of working code and synthetic tests does not establish successful container experiments.
 
 ## Executed checks

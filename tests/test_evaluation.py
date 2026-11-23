@@ -1,0 +1,190 @@
+import json
+from datetime import timedelta
+
+import pytest
+from conftest import END, firing
+from test_rules_baseline import CPU, LATENCY, TIMEOUT
+
+from agent.catalog import FORBIDDEN_TOKENS
+from evaluation import run as evaluation
+from evaluation.scenarios import SCENARIOS
+from evaluation.scoring import score_mode
+
+TELEMETRY = {
+    "healthy": ({}, []),
+    "cpu_pressure": (CPU, [firing("WorkerCpuPressure")]),
+    "network_latency": (LATENCY, [firing("ApiHighLatency")]),
+    "network_connectivity_or_timeout": (TIMEOUT, [firing("WorkerCallTimeouts")]),
+    "service_unavailable": (
+        {"worker.up": 0, "api.worker_calls.success": 0.0, "api.worker_calls.error": 9.8},
+        [firing("ServiceUnavailable", "critical")],
+    ),
+}
+LABELS = ("cpu_pressure", "network_latency", "network_connectivity_or_timeout", '"healthy"')
+
+
+class FakeLab:
+    def __init__(self, bundle_for, fail_capture_for=()):
+        self.bundle_for, self.fail_capture_for = bundle_for, fail_capture_for
+        self.calls, self.current = [], None
+
+    def sleep(self, seconds):
+        pass
+
+    def idle(self):
+        return True
+
+    def environment(self):
+        return {"docker_version": "fake"}
+
+    def start_load(self, seconds):
+        self.calls.append("start_load")
+        return "load"
+
+    def stop_load(self, handle):
+        self.calls.append("stop_load")
+
+    def inject(self, scenario):
+        self.calls.append(f"inject:{scenario.name}")
+        return {"run_id": "r1", "started_at": (END - timedelta(seconds=40)).isoformat()}
+
+    def stop(self, scenario):
+        self.calls.append(f"stop:{scenario.name}")
+
+    def active(self, scenario):
+        return False
+
+    def events(self, scenario, run_id):
+        return [{"run_id": run_id, "event": "scenario_end", "reason": "duration_elapsed"}]
+
+    def recovered(self, scenario):
+        return True
+
+    def capture(self, lookback, incident_id):
+        self.current = incident_id
+        for name in self.fail_capture_for:
+            if name in self.calls[-1]:
+                raise RuntimeError("Prometheus query failed")
+        overrides, alerts = TELEMETRY[self._label()]
+        bundle = self.bundle_for(overrides, alerts)
+        return bundle.model_copy(update={"incident_id": incident_id})
+
+    def _label(self):
+        last = next((c for c in reversed(self.calls) if c.startswith("inject:")), None)
+        if self.calls[-1] == "start_load" or last is None:
+            return "healthy"
+        return SCENARIOS[last.split(":")[1]].label
+
+
+def run_all(tmp_path, lab, reps=2, modes=("rules",)):
+    names = ["healthy", "cpu", "latency", "timeout"]
+    trials = evaluation.run_trials(lab, names, reps, 7, tmp_path, evaluation.Settings())
+    evaluation.diagnose_bundles(tmp_path / "bundles", tmp_path / "predictions", modes)
+    return trials, evaluation.score_run(tmp_path)
+
+
+@pytest.fixture(autouse=True)
+def no_shared_artifacts(monkeypatch, tmp_path):
+    monkeypatch.setattr(evaluation, "ROOT", tmp_path)
+
+
+def test_end_to_end_trials_with_rules(bundle_for, tmp_path):
+    trials, scores = run_all(tmp_path, FakeLab(bundle_for))
+    rules = scores["rules"]
+    assert (rules["n_trials"], rules["n_fault"], rules["correct"]) == (8, 6, 6)
+    assert (rules["n_healthy"], rules["false_incidents"], rules["n_failed_trials"]) == (2, 0, 0)
+    assert rules["evidence_supported"] == 8
+    assert rules["affected_service_correct"] == rules["affected_service_scored"] == 8
+    latency = next(t for t in trials if t["scenario"] == "latency")
+    assert latency["alert_detection_delay_s"] == pytest.approx(20)
+    assert latency["ground_truth_events"][0]["reason"] == "duration_elapsed"
+    assert (tmp_path / "summary.md").exists() and (tmp_path / "summary.csv").exists()
+    assert (tmp_path / "artifacts" / "evaluation-summary.md").exists()
+    summary = (tmp_path / "summary.md").read_text()
+    assert "| rules | 6/6 |" in summary and "Caveats" in summary
+
+
+def test_agent_visible_files_carry_no_labels(bundle_for, tmp_path):
+    run_all(tmp_path, FakeLab(bundle_for), reps=1)
+    for path in (tmp_path / "bundles").glob("*.json"):
+        text = path.read_text()
+        assert not any(label in text for label in LABELS), path
+        assert not any(token in text for token in FORBIDDEN_TOKENS), path
+        assert not any(name in path.name for name in SCENARIOS)
+    truth = [json.loads(p.read_text()) for p in (tmp_path / "ground_truth").glob("*.json")]
+    assert {t["label"] for t in truth} == {"healthy", *LABELS[:3]}
+
+
+def test_order_is_randomized_reproducibly(bundle_for, tmp_path):
+    first = [t["scenario"] for t in run_all(tmp_path / "a", FakeLab(bundle_for))[0]]
+    second = [t["scenario"] for t in run_all(tmp_path / "b", FakeLab(bundle_for))[0]]
+    assert first == second and first != sorted(first)
+
+
+def test_failed_trials_are_kept_and_cleaned_up(bundle_for, tmp_path):
+    lab = FakeLab(bundle_for, fail_capture_for=("inject:timeout",))
+    trials, scores = run_all(tmp_path, lab)
+    failed = [t for t in trials if t["status"] == "failed"]
+    assert len(failed) == 2 and all("Prometheus query failed" in t["error"] for t in failed)
+    assert lab.calls.count("stop:timeout") == 2 and lab.calls.count("stop_load") == 8
+    assert scores["rules"]["n_failed_trials"] == 2 and scores["rules"]["n_trials"] == 8
+
+
+def test_predictions_are_never_rewritten(bundle_for, tmp_path, monkeypatch):
+    run_all(tmp_path, FakeLab(bundle_for), reps=1)
+    before = {p.name: p.read_text() for p in (tmp_path / "predictions" / "rules").glob("*.json")}
+    monkeypatch.setattr(evaluation, "rules_diagnose", lambda bundle: pytest.fail("re-ran"))
+    evaluation.diagnose_bundles(tmp_path / "bundles", tmp_path / "predictions", ["rules"])
+    after = {p.name: p.read_text() for p in (tmp_path / "predictions" / "rules").glob("*.json")}
+    assert before == after
+
+
+def test_scoring_keeps_abstentions_and_denominators_separate():
+    rows = [
+        {"label": "network_latency", "predicted": "network_latency"},
+        {"label": "network_latency", "predicted": "unknown_or_ambiguous"},
+        {"label": "cpu_pressure", "predicted": "network_latency"},
+        {"label": "healthy", "predicted": "cpu_pressure"},
+        {"label": "healthy", "predicted": "unknown_or_ambiguous"},
+        {"label": "cpu_pressure", "predicted": None, "status": "failed"},
+    ]
+    for row in rows:
+        row.setdefault("status", "captured")
+        row.update(mode="rules", evidence_count=1, citation_problems=[], latency_s=0.01)
+    result = score_mode(rows)
+    assert (result["n_trials"], result["n_scored"], result["n_failed_trials"]) == (6, 5, 1)
+    assert (result["correct"], result["abstained"], result["wrong_cause"]) == (1, 1, 1)
+    assert result["root_cause_accuracy"] == pytest.approx(1 / 3)
+    assert (result["false_incidents"], result["healthy_abstained"]) == (1, 1)
+    assert score_mode([])["root_cause_accuracy"] is None
+
+
+def test_export_for_site_contains_only_captured_measurements(bundle_for, tmp_path):
+    from evaluation.export_site import export
+
+    run_all(tmp_path, FakeLab(bundle_for, fail_capture_for=("inject:cpu",)), reps=1)
+    data = export(tmp_path)
+    assert data["source"] == "recorded" and len(data["incidents"]) == 3
+    assert data["failed_trials"] == [
+        {"scenario": "cpu", "error": "RuntimeError: Prometheus query failed"}
+    ]
+    latency = next(i for i in data["incidents"] if i["scenario"] == "latency")
+    assert latency["reports"]["rules"]["predicted_cause"] == "network_latency"
+    assert latency["ground_truth"]["started_at"] and latency["bundle"]["series"]
+
+
+def test_settings_keep_evidence_windows_inside_the_trial():
+    settings = evaluation.Settings()
+    assert settings.baseline_seconds + settings.decision_delay_seconds > settings.lookback_seconds
+    with pytest.raises(ValueError, match="before this trial"):
+        evaluation.Settings(baseline_seconds=30)
+
+
+def test_worker_outage_scenario_is_scored(bundle_for, tmp_path):
+    trials = evaluation.run_trials(
+        FakeLab(bundle_for), ["worker_down", "healthy"], 1, 7, tmp_path, evaluation.Settings()
+    )
+    evaluation.diagnose_bundles(tmp_path / "bundles", tmp_path / "predictions", ["rules"])
+    rules = evaluation.score_run(tmp_path)["rules"]
+    assert {t["scenario"] for t in trials} == {"worker_down", "healthy"}
+    assert rules["correct"] == 1 and rules["affected_service_correct"] == 2

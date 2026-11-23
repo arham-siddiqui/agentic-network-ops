@@ -78,3 +78,112 @@ tests:
       - eval_time: 140s
         alertname: ApiHighErrorRate
         exp_alerts: []
+  - name: Sustained slow API responses fire and clear
+    interval: 1s
+    input_series:
+      - series: 'lab_http_request_duration_seconds_bucket{job="api",route="/work",method="GET",le="0.25"}'
+        values: '0+10x30 300+0x59 310+10x60'
+      - series: 'lab_http_request_duration_seconds_count{job="api",route="/work",method="GET"}'
+        values: '0+10x150'
+    alert_rule_test:
+      - eval_time: 30s
+        alertname: ApiHighLatency
+        exp_alerts: []
+      - eval_time: 42s
+        alertname: ApiHighLatency
+        exp_alerts: []
+      - eval_time: 60s
+        alertname: ApiHighLatency
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: Over 25% of API work responses take longer than 250 ms
+              description: Compare API and worker latency to locate the delay.
+      - eval_time: 140s
+        alertname: ApiHighLatency
+        exp_alerts: []
+  - name: Short slow burst does not fire
+    interval: 1s
+    input_series:
+      - series: 'lab_http_request_duration_seconds_bucket{job="api",route="/work",method="GET",le="0.25"}'
+        values: '0+10x30 300+0x3 310+10x60'
+      - series: 'lab_http_request_duration_seconds_count{job="api",route="/work",method="GET"}'
+        values: '0+10x94'
+    alert_rule_test:
+      - eval_time: 40s
+        alertname: ApiHighLatency
+        exp_alerts: []
+      - eval_time: 60s
+        alertname: ApiHighLatency
+        exp_alerts: []
+  - name: Idle or near-idle traffic does not fire latency alert
+    interval: 1s
+    input_series:
+      - series: 'lab_http_request_duration_seconds_bucket{job="api",route="/work",method="GET",le="0.25"}'
+        values: '0+0x90'
+      - series: 'lab_http_request_duration_seconds_count{job="api",route="/work",method="GET"}'
+        values: '0+0x30 1+0x60'
+    alert_rule_test:
+      - eval_time: 20s
+        alertname: ApiHighLatency
+        exp_alerts: []
+      - eval_time: 50s
+        alertname: ApiHighLatency
+        exp_alerts: []
+  - name: Sustained worker call timeouts fire and clear
+    interval: 1s
+    input_series:
+      - series: 'lab_worker_calls_total{job="api",outcome="success"}'
+        values: '0+10x30 300+0x59 310+10x60'
+      - series: 'lab_worker_calls_total{job="api",outcome="timeout"}'
+        values: '0+0x30 2+2x59 120+0x60'
+    alert_rule_test:
+      - eval_time: 30s
+        alertname: WorkerCallTimeouts
+        exp_alerts: []
+      - eval_time: 60s
+        alertname: WorkerCallTimeouts
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: API calls to the worker are timing out
+      - eval_time: 140s
+        alertname: WorkerCallTimeouts
+        exp_alerts: []
+  - name: Idle traffic and a single timeout do not fire
+    interval: 1s
+    input_series:
+      - series: 'lab_worker_calls_total{job="api",outcome="success"}'
+        values: '0+0x20 0+10x60'
+      - series: 'lab_worker_calls_total{job="api",outcome="timeout"}'
+        values: '0+0x40 2+0x40'
+    alert_rule_test:
+      - eval_time: 20s
+        alertname: WorkerCallTimeouts
+        exp_alerts: []
+      - eval_time: 55s
+        alertname: WorkerCallTimeouts
+        exp_alerts: []
+  - name: Proxy unavailability fires and recovers
+    interval: 1s
+    input_series:
+      - series: 'up{job="impairment-proxy",instance="proxy-admin:8474"}'
+        values: '1+0x20 0+0x20 1+0x20'
+    alert_rule_test:
+      - eval_time: 20s
+        alertname: ImpairmentProxyUnavailable
+        exp_alerts: []
+      - eval_time: 36s
+        alertname: ImpairmentProxyUnavailable
+        exp_alerts:
+          - exp_labels:
+              job: impairment-proxy
+              instance: proxy-admin:8474
+              severity: critical
+            exp_annotations:
+              summary: API-to-worker proxy metrics endpoint unavailable
+      - eval_time: 50s
+        alertname: ImpairmentProxyUnavailable
+        exp_alerts: []

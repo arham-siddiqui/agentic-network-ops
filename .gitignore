@@ -15,3 +15,6 @@ htmlcov/
 artifacts/
 *.egg-info/
 .DS_Store
+
+# Local Claude Code state (agent worktrees, settings)
+.claude/
