@@ -3,20 +3,20 @@
 
 const NS = "http://www.w3.org/2000/svg";
 const W = 170;
-const H = 64;
+const H = 70;
+const ROW = 118;
 const NODES = {
-  load: { x: 95, y: 120, title: "Load generator", sub: "10 req/s · ≤ 4 in flight" },
-  api: { x: 335, y: 120, title: "API", sub: "2 s worker-call timeout" },
-  proxy: { x: 575, y: 120, title: "Impairment proxy", sub: "Toxiproxy · api_to_worker" },
-  worker: { x: 815, y: 120, title: "Worker", sub: "0.5-core CPU quota" },
-  investigator: { x: 160, y: 335, title: "Investigator (host)", sub: "read-only · allowlisted" },
-  prometheus: { x: 440, y: 335, title: "Prometheus", sub: "scrape 2 s · rules 2 s" },
-  grafana: { x: 640, y: 335, title: "Grafana", sub: "dashboard" },
+  load: { x: 110, y: ROW, title: "Load", sub: "10 req/s" },
+  api: { x: 370, y: ROW, title: "API", sub: "2 s timeout" },
+  proxy: { x: 630, y: ROW, title: "Proxy", sub: "Toxiproxy" },
+  worker: { x: 890, y: ROW, title: "Worker", sub: "0.5-core quota" },
+  investigator: { x: 240, y: 318, title: "Investigator", sub: "read-only" },
+  prometheus: { x: 520, y: 318, title: "Prometheus", sub: "scrapes every 2 s" },
 };
-const LANE_OUT = 111;
-const LANE_BACK = 129;
-const X = { loadR: 180, apiL: 250, apiR: 420, proxyL: 490, proxyR: 660, workerL: 730 };
-const COLORS = { ok: "#3987e5", held: "#fab219", error: "#d03b3b", reply: "#7fb2ef" };
+const LANE_OUT = ROW - 9;
+const LANE_BACK = ROW + 9;
+const X = { loadR: 195, apiL: 285, apiR: 455, proxyL: 545, proxyR: 715, workerL: 805 };
+const COLORS = { ok: "#5aa2f0", held: "#fab219", error: "#ef5a5a", reply: "#9cc7f5" };
 
 function el(name, attrs = {}, parent) {
   const node = document.createElementNS(NS, name);
@@ -35,74 +35,62 @@ export class Topology {
   constructor(container, config) {
     this.config = config;
     this.packets = [];
-    this.svg = el("svg", { viewBox: "0 0 1000 470", role: "img", "aria-label": "Lab topology" });
+    this.svg = el("svg", { viewBox: "0 36 1000 364", role: "img", "aria-label": "Lab topology" });
     container.appendChild(this.svg);
     this.draw();
   }
 
   draw() {
     const s = this.svg;
-    el("rect", { x: 10, y: 44, width: 980, height: 168, rx: 12, class: "zone" }, s);
-    text(s, 24, 64, "lab network (internal)", "zone-label", "start");
-    el("rect", { x: 10, y: 262, width: 735, height: 200, rx: 12, class: "zone" }, s);
-    text(s, 24, 282, "monitoring + investigation", "zone-label", "start");
-    el("rect", { x: 760, y: 262, width: 230, height: 200, rx: 12, class: "zone control-zone" }, s);
-    text(s, 774, 282, "control network (internal)", "zone-label", "start");
-
     this.links = {
-      loadApi: el("line", { x1: X.loadR, y1: 120, x2: X.apiL, y2: 120, class: "link" }, s),
-      apiProxy: el("line", { x1: X.apiR, y1: 120, x2: X.proxyL, y2: 120, class: "link" }, s),
-      proxyWorker: el("line", { x1: X.proxyR, y1: 120, x2: X.workerL, y2: 120, class: "link" }, s),
+      loadApi: el("line", { x1: X.loadR, y1: ROW, x2: X.apiL, y2: ROW, class: "link" }, s),
+      apiProxy: el("line", { x1: X.apiR, y1: ROW, x2: X.proxyL, y2: ROW, class: "link" }, s),
+      proxyWorker: el("line", { x1: X.proxyR, y1: ROW, x2: X.workerL, y2: ROW, class: "link" }, s),
     };
     this.scrapes = {};
+    const p = NODES.prometheus;
     for (const [job, node] of [["api", "api"], ["impairment-proxy", "proxy"], ["worker", "worker"]]) {
       const n = NODES[node];
       this.scrapes[job] = el(
         "path",
-        { d: `M ${NODES.prometheus.x} ${NODES.prometheus.y - H / 2} C ${NODES.prometheus.x} 240, ${n.x} 230, ${n.x} ${n.y + H / 2}`, class: "scrape" },
+        { d: `M ${p.x} ${p.y - H / 2} C ${p.x} 230, ${n.x} 220, ${n.x} ${n.y + H / 2}`, class: "scrape" },
         s,
       );
     }
-    text(s, 452, 238, "scrape /metrics", "edge-label", "start");
-    el("line", { x1: NODES.prometheus.x + W / 2, y1: 335, x2: NODES.grafana.x - W / 2, y2: 335, class: "link" }, s);
-    el("line", { x1: NODES.investigator.x + W / 2, y1: 335, x2: NODES.prometheus.x - W / 2 - 6, y2: 335, class: "readonly" }, s);
-    el("path", { d: `M ${NODES.prometheus.x - W / 2 - 6} 329 l 8 6 l -8 6 z`, fill: "#3987e5" }, s);
-    text(s, (NODES.investigator.x + NODES.prometheus.x) / 2, 324, "21 fixed queries", "edge-label blue");
+    const inv = NODES.investigator;
+    el("line", { x1: inv.x + W / 2, y1: inv.y, x2: p.x - W / 2 - 8, y2: p.y, class: "readonly" }, s);
+    el("path", { d: `M ${p.x - W / 2 - 8} ${p.y - 6} l 8 6 l -8 6 z`, class: "arrow" }, s);
 
-    // Control plane: proxy admin API and the network fault controller, unreachable from the lab network.
-    el("rect", { x: 775, y: 296, width: 200, height: 36, rx: 8, class: "zone" }, s);
-    text(s, 875, 319, "proxy admin API :8474", "edge-label");
-    el("rect", { x: 775, y: 342, width: 200, height: 36, rx: 8, class: "zone" }, s);
-    text(s, 875, 365, "network fault controller", "edge-label");
-    text(s, 875, 400, "operator terminal → unix socket", "edge-label");
-    text(s, 875, 418, "(no HTTP fault endpoint)", "edge-label");
-    el("path", { d: `M ${NODES.proxy.x + 60} ${NODES.proxy.y + H / 2} C 640 250, 760 260, 775 314`, class: "scrape" }, s);
-    text(s, 682, 252, "admin (control net only)", "edge-label");
-    el("path", { d: `M ${NODES.investigator.x} ${NODES.investigator.y + H / 2} L ${NODES.investigator.x} 440 L 760 440`, class: "scrape down" }, s);
-    const xMark = el("g", { transform: "translate(560 440)" }, s);
-    el("line", { x1: -8, y1: -8, x2: 8, y2: 8, class: "no-path" }, xMark);
-    el("line", { x1: -8, y1: 8, x2: 8, y2: -8, class: "no-path" }, xMark);
-    text(s, 420, 432, "no route or tool from the investigator to fault controls", "edge-label red");
-    text(s, NODES.worker.x, 194, "CPU fault: unix socket inside the container", "edge-label");
+    // Fault controls: operator-only, no path from the investigator.
+    el("rect", { x: 720, y: 283, width: 250, height: 70, rx: 14, class: "control-zone" }, s);
+    text(s, 845, 312, "Fault controls", "control-title");
+    text(s, 845, 334, "operator terminal only", "control-sub");
 
     this.packetLayer = el("g", {}, s);
 
     this.nodes = {};
     for (const [key, n] of Object.entries(NODES)) {
       const g = el("g", { class: "node", transform: `translate(${n.x - W / 2} ${n.y - H / 2})` }, s);
-      el("rect", { width: W, height: H }, g);
-      text(g, W / 2, 28, n.title);
-      text(g, W / 2, 47, n.sub, "sub");
+      el("rect", { width: W, height: H, rx: 14 }, g);
+      text(g, W / 2, 31, n.title);
+      text(g, W / 2, 52, n.sub, "sub");
       this.nodes[key] = g;
     }
     this.badges = {};
-    for (const key of ["proxy", "worker", "prometheus", "api"]) {
+    for (const key of ["proxy", "worker", "prometheus"]) {
       const n = NODES[key];
-      const g = el("g", { class: "badge", transform: `translate(${n.x} ${n.y - H / 2 - 4})`, visibility: "hidden" }, s);
-      const r = el("rect", { x: -60, y: -12, width: 120, height: 22 }, g);
+      const g = el("g", { class: "badge", transform: `translate(${n.x} ${n.y - H / 2 - 18})`, visibility: "hidden" }, s);
+      const r = el("rect", { x: -60, y: -14, width: 120, height: 26, rx: 13 }, g);
       const t = text(g, 0, 4, "");
       this.badges[key] = { g, r, t };
     }
+
+    // Legend
+    const legend = el("g", { transform: "translate(40 384)", class: "legend" }, s);
+    [["request", COLORS.ok], ["held at proxy", COLORS.held], ["failed", COLORS.error]].forEach(([label, color], i) => {
+      el("circle", { cx: i * 150, cy: -4, r: 5, fill: color }, legend);
+      text(legend, i * 150 + 12, 0, label, "legend-text", "start");
+    });
   }
 
   badge(key, label, critical = false) {
@@ -112,7 +100,7 @@ export class Topology {
       return;
     }
     b.t.textContent = label;
-    const width = Math.max(60, label.length * 7.2 + 18);
+    const width = Math.max(70, label.length * 8 + 24);
     b.r.setAttribute("x", -width / 2);
     b.r.setAttribute("width", width);
     b.g.setAttribute("class", critical ? "badge critical" : "badge");
@@ -123,10 +111,10 @@ export class Topology {
   update(state) {
     const kind = state.fault?.kind;
     const set = (node, cls) => this.nodes[node].setAttribute("class", `node ${cls}`.trim());
-    set("worker", kind === "cpu" ? "hot" : kind === "worker_down" ? "down" : "");
     const network = kind === "latency" || kind === "timeout" || kind === "network";
+    set("worker", kind === "cpu" ? "hot" : kind === "worker_down" || !state.up.worker ? "down" : "");
     set("proxy", !state.up["impairment-proxy"] || kind === "proxy_down" ? "down" : network ? "impaired" : "");
-    if (!state.up.worker) set("worker", "down");
+    set("api", state.up.api ? "" : "down");
     this.links.apiProxy.setAttribute(
       "class",
       kind === "proxy_down" ? "link broken" : kind === "latency" || kind === "network" ? "link impaired" : "link",
@@ -142,17 +130,22 @@ export class Topology {
     this.badge(
       "proxy",
       kind === "latency"
-        ? `toxic: +${p?.latencyMs ?? "?"} ms`
+        ? `+${p?.latencyMs ?? "?"} ms delay`
         : kind === "timeout"
-          ? "toxic: dropping requests"
+          ? "dropping requests"
           : kind === "network"
-            ? "network fault (ground truth)"
+            ? "network fault"
             : kind === "proxy_down"
-              ? "DOWN"
+              ? "down"
               : null,
-      kind === "proxy_down",
+      kind === "proxy_down" || kind === "timeout",
     );
-    this.badge("worker", kind === "cpu" ? `CPU ${state.workerCpu?.toFixed(2) ?? "?"} / 0.50` : kind === "worker_down" ? "DOWN" : null, kind === "worker_down");
+    const cpu = state.workerCpu;
+    this.badge(
+      "worker",
+      kind === "cpu" ? `CPU ${Number.isFinite(cpu) ? cpu.toFixed(2) : "?"} / 0.50` : kind === "worker_down" ? "down" : null,
+      kind === "worker_down",
+    );
     const firing = state.firing;
     this.badge("prometheus", firing ? `${firing} alert${firing > 1 ? "s" : ""} firing` : null, true);
   }
@@ -173,7 +166,7 @@ export class Topology {
       forward(X.workerL);
       if (plan.heldMs > 0) {
         // Each held response gets its own slot beside the proxy; at most 4 are ever in flight.
-        const slot = X.proxyR + 10 + (request.id % 4) * 12;
+        const slot = X.proxyR + 12 + (request.id % 4) * 14;
         legs.push({ ...span(X.workerL, slot, LANE_BACK), dur: hop * 0.4, color: COLORS.reply });
         back(slot, COLORS.reply, plan.heldMs / 1000);
       } else {
@@ -193,7 +186,7 @@ export class Topology {
       forward(X.apiR + 40);
       back(X.apiR + 40, COLORS.error);
     }
-    const node = el("circle", { r: 5, class: "packet", fill: COLORS.ok }, this.packetLayer);
+    const node = el("circle", { r: 6, class: "packet", fill: COLORS.ok }, this.packetLayer);
     this.packets.push({ start: now, legs, node, end: now + legs.reduce((sum, l) => sum + l.dur, 0) });
   }
 

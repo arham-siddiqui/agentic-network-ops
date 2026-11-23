@@ -10,115 +10,138 @@
 <body>
   <div class="app">
     <header class="top">
-      <h1>Fault Lab Console<small>API → impairment proxy → worker · Prometheus alerts · read-only investigator</small></h1>
+      <h1>Fault Lab</h1>
       <nav class="tabs" role="tablist" aria-label="Data source">
         <button role="tab" id="tab-simulation" aria-selected="true">Simulation</button>
-        <button role="tab" id="tab-recorded" aria-selected="false" disabled>Recorded run</button>
-        <button role="tab" id="tab-live" aria-selected="false" disabled>Live (local)</button>
+        <button role="tab" id="tab-recorded" aria-selected="false" disabled>Recorded</button>
+        <button role="tab" id="tab-live" aria-selected="false" disabled>Live</button>
       </nav>
-      <div class="clock" id="clock"></div>
+      <span class="pill sim" id="pill">Simulation · modeled, not measured</span>
+      <div class="top-right">
+        <div class="clock" id="clock"></div>
+        <div class="seg" id="speed" aria-label="Speed">
+          <button data-speed="1" aria-pressed="true">1×</button>
+          <button data-speed="2" aria-pressed="false">2×</button>
+          <button data-speed="5" aria-pressed="false">5×</button>
+        </div>
+        <button class="ghost" id="pause">Pause</button>
+      </div>
     </header>
 
-    <div class="banner" id="banner"><strong id="banner-title">SIMULATION</strong><span id="banner-text">Modeled behavior, not measurements from the lab. Rules, thresholds and limits mirror the repository; service timings are assumptions.</span></div>
+    <section class="guide" id="presenter" aria-label="Guided demo">
+      <button class="icon" id="step-prev" aria-label="Previous step">‹</button>
+      <span class="step-count" id="step-count"></span>
+      <p class="step-text" id="step-text"></p>
+      <button class="icon" id="step-next" aria-label="Next step">›</button>
+    </section>
 
-    <section class="panel presenter" id="presenter">
-      <button class="btn" id="step-prev">◀</button>
-      <div class="step-text" id="step-text"></div>
-      <button class="btn primary" id="step-next">Next ▶</button>
-      <div class="toolbar playback">
-        <span class="note">speed</span>
-        <button data-speed="1" aria-pressed="true">1×</button>
-        <button data-speed="2" aria-pressed="false">2×</button>
-        <button data-speed="5" aria-pressed="false">5×</button>
-        <button id="pause">Pause</button>
-        <button id="reset">Reset</button>
+    <section class="hero panel">
+      <div id="topology"></div>
+
+      <div class="bar" id="sim-controls">
+        <div class="faults" id="fault-row">
+          <button class="fault" data-fault="healthy" aria-pressed="true">Healthy</button>
+          <div class="fault-group">
+            <button class="fault" data-fault="latency">Network latency</button>
+            <label class="slider"><input type="range" id="p-latency" min="50" max="1500" step="50" value="600"><output id="latency-out">600 ms</output></label>
+          </div>
+          <button class="fault" data-fault="timeout">Timeout</button>
+          <button class="fault" data-fault="cpu">CPU pressure</button>
+          <button class="fault" data-fault="worker_down">Worker down</button>
+        </div>
+        <span class="chip" id="countdown" hidden></span>
+        <details class="advanced">
+          <summary>Options</summary>
+          <div class="advanced-body">
+            <label>Fault duration <input type="number" id="p-duration" min="1" max="120" value="60"> s</label>
+            <button class="ghost" id="proxy-down">Proxy down (simulation only)</button>
+            <button class="ghost" id="reset">Reset simulation</button>
+            <span class="error-msg" id="fault-error"></span>
+          </div>
+        </details>
+      </div>
+
+      <div class="bar" id="rec-controls" hidden>
+        <select id="rec-select" aria-label="Recorded incident"></select>
+        <button class="primary" id="rec-play">Play</button>
+        <button class="ghost" id="rec-restart">Restart</button>
+        <button class="ghost" id="rec-end">Jump to decision</button>
+        <div class="seg" aria-label="Replay speed">
+          <button data-rec-speed="1" aria-pressed="false">1×</button>
+          <button data-rec-speed="4" aria-pressed="true">4×</button>
+          <button data-rec-speed="10" aria-pressed="false">10×</button>
+        </div>
+        <span class="chip truth" id="rec-truth"></span>
+      </div>
+
+      <div class="bar" id="live-controls" hidden>
+        <span class="chip" id="live-status">Connecting…</span>
+        <span class="muted">Faults are injected from a terminal on this laptop, e.g. <code>make inject-network-fault</code>.</span>
       </div>
     </section>
 
-    <div class="row-top">
-      <section class="panel" id="topology">
-        <h2>Topology <span class="hint" id="topology-hint">packet speed slowed for visibility; fault delays at real scale</span></h2>
-      </section>
-      <div class="side">
-        <section class="panel controls" id="controls">
-          <div id="sim-controls" class="controls">
-            <h2>Inject a fault <span class="hint">drives the simulation</span></h2>
-            <div class="active-fault none" id="active-fault">No fault active.</div>
-            <div class="params">
-              <label>latency <input type="number" id="p-latency" min="50" max="1500" step="50" value="600"> ms</label>
-              <label>duration <input type="number" id="p-duration" min="1" max="120" value="60"> s</label>
-            </div>
-            <div class="fault-grid" id="fault-grid"></div>
-            <div class="toolbar">
-              <button class="btn stop" id="stop-fault" disabled>Stop fault</button>
-              <span class="error-msg" id="fault-error"></span>
-            </div>
-            <p class="note">The real lab takes faults only from the terminal (<code>make inject-network-fault</code>, <code>make inject-cpu-fault</code> over Unix sockets; <code>make worker-outage</code> stops and restarts the worker container). There is no HTTP fault endpoint, and the investigator has no fault tools.</p>
-          </div>
+    <section class="tiles">
+      <article class="tile" id="tile-impact">
+        <h2>User impact</h2>
+        <div class="big" id="impact-big">—</div>
+        <div class="tile-sub" id="impact-sub">API p95 latency</div>
+      </article>
+      <article class="tile" id="tile-alerts">
+        <h2>Alerts</h2>
+        <div id="alerts-body"><div class="calm">All clear</div></div>
+      </article>
+      <article class="tile" id="tile-diagnosis">
+        <h2>Diagnosis <button class="link-btn" id="run-inv">re-run</button></h2>
+        <div class="big cause" id="cause">Waiting…</div>
+        <p class="tile-sub" id="diag-summary">The investigator needs 30 s of telemetry.</p>
+        <p class="readonly-note">Read-only · no action taken</p>
+      </article>
+    </section>
 
-          <div id="rec-controls" class="controls" hidden>
-            <h2>Recorded incident <span class="hint">exported from a real lab run</span></h2>
-            <label class="params">incident <select id="rec-select"></select></label>
-            <div class="active-fault none" id="rec-truth"></div>
-            <div class="toolbar">
-              <button class="btn primary" id="rec-play">Play</button>
-              <button id="rec-restart">Restart</button>
-              <button id="rec-end">Jump to decision</button>
-              <span class="note">speed</span>
-              <button data-rec-speed="1" aria-pressed="false">1×</button>
-              <button data-rec-speed="4" aria-pressed="true">4×</button>
-              <button data-rec-speed="10" aria-pressed="false">10×</button>
-            </div>
-            <p class="note" id="rec-meta"></p>
-            <p class="note">Charts replay the exact evidence bundle the investigator received (120 s, 5 s step). The report appears at the decision time. Packet animation is simulation-only and is off here.</p>
-          </div>
+    <p class="caption" id="charts-note">Shaded band = injected fault (ground truth, not an input to alerts or diagnosis).</p>
+    <div class="charts" id="charts"></div>
 
-          <div id="live-controls" class="controls" hidden>
-            <h2>Live lab <span class="hint">read-only view of the local Compose lab</span></h2>
-            <div class="active-fault none" id="live-status">Connecting…</div>
-            <p class="note">Faults are injected from a terminal on this laptop:</p>
-            <pre class="cmds"><code>make inject-network-fault                 # latency, 600 ms, 60 s
+    <section class="more">
+      <details>
+        <summary>More metrics</summary>
+        <div class="charts" id="charts-more"></div>
+      </details>
+      <details>
+        <summary>All alert rules</summary>
+        <div class="alerts" id="alerts"></div>
+      </details>
+      <details>
+        <summary>Investigator report and evidence</summary>
+        <div id="inv-body"><p class="muted">Waiting for 30 s of telemetry…</p></div>
+      </details>
+      <details>
+        <summary>Event log</summary>
+        <ul class="log" id="log"></ul>
+      </details>
+      <details>
+        <summary>Security boundaries</summary>
+        <ul class="plain">
+          <li>The investigator runs on the host and reads Prometheus through 21 fixed, read-only queries. It has no shell, Docker, or fault tools.</li>
+          <li>Fault controls sit on a separate internal control network and are reached only from an operator terminal over Unix sockets (<code>make inject-network-fault</code>, <code>make inject-cpu-fault</code>, <code>make worker-outage</code>). There is no HTTP fault endpoint.</li>
+          <li>Fault markers and scenario records are ground truth for evaluation only; they are never inputs to alerts or diagnosis.</li>
+          <li>Containers run non-root with dropped capabilities, read-only filesystems, CPU/memory limits, and no outbound internet.</li>
+        </ul>
+      </details>
+      <details>
+        <summary>How this works</summary>
+        <p class="muted" id="how-text"></p>
+        <pre class="cmds" id="live-cmds" hidden><code>make inject-network-fault                 # latency, 600 ms, 60 s
 make inject-network-fault LATENCY_MS=900
 make inject-network-fault SCENARIO=timeout
 make inject-cpu-fault
 make worker-outage DURATION=30             # stops, then restarts the worker
-make network-fault-status
 make stop-network-fault
 make investigate                          # real investigator report</code></pre>
-            <p class="note">This page only reads a snapshot every 2 s from the local bridge; it cannot change the lab.</p>
-          </div>
-        </section>
-      </div>
-    </div>
-
-    <section class="panel">
-      <h2>Prometheus alerts <span class="hint" id="alerts-hint">rules from monitoring/alerts.yml · evaluated every 2 s · pending → firing after <code>for: 10s</code></span></h2>
-      <div class="alerts" id="alerts"></div>
+      </details>
     </section>
 
-    <p class="note" id="charts-note">Charts mirror the Grafana dashboard panels, computed from simulated scrapes with the same windows. The shaded band is the injected fault — <b>ground truth, not an alert or investigator input</b>. Hover any chart for values.</p>
-    <div class="charts" id="charts"></div>
-
-    <div class="row-bottom">
-      <section class="panel" id="investigator">
-        <h2>Investigator <span class="hint" id="inv-hint">JS port of agent/rules_baseline.py · read-only</span></h2>
-        <div class="inv-head" id="inv-controls">
-          <button class="btn primary" id="run-inv">Run investigator</button>
-          <label class="note"><input type="checkbox" id="auto-inv" checked> re-run every 5 s</label>
-        </div>
-        <div id="inv-body"><p class="note">Waiting for the first 30 s of telemetry…</p></div>
-      </section>
-      <section class="panel">
-        <h2>Event log</h2>
-        <ul class="log" id="log"></ul>
-      </section>
-    </div>
-
     <footer>
-      Source: <a href="https://github.com/arham-siddiqui/agentic-network-ops">agentic-network-ops</a>.
-      Simulation mode models the lab in the browser and does not connect to it. Thresholds, windows, limits and the diagnosis
-      logic follow the repository; service timings and the CPU fault's latency effect are assumptions.
-      Recorded mode shows only runs exported from the real lab; Live mode reads the local lab through a read-only bridge.
+      <a href="https://github.com/arham-siddiqui/agentic-network-ops">agentic-network-ops</a> · simulation timings are assumptions; thresholds, limits and diagnosis logic follow the repository.
     </footer>
   </div>
   <script type="module" src="js/app.js"></script>
