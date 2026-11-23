@@ -8,7 +8,7 @@
 | Network-path impairment (latency, timeout) | Done | Both passed on the first Docker run (1 run each); promtool fixtures pass |
 | 2. Read-only diagnosis: tools interface, rules baseline, report schema 1.1 | Done | Tools checked against the live lab, including during a worker outage; rules correct on the first real evaluation |
 | Experimental LLM modes (optional extra) | Exists from the November milestone | Scripted provider only; no real-model calls. Next stage moves them onto the live tools or replaces them |
-| Labelled evaluation pipeline (incl. worker outage) | Done | First real run: n=1 per class. Full 5×3 run in progress |
+| Labelled evaluation pipeline (incl. worker outage) | Done | 15 valid real trials: rules 12/12 faults, 0/3 healthy misdiagnosed (2 sleep-affected trials excluded and re-run) |
 | 3. Defensive security experiments | Not started | — |
 | 4. Constrained remediation | Not started | — |
 

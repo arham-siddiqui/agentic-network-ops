@@ -26,6 +26,8 @@ The evaluation asks one question: given the same unlabeled telemetry, how often 
 
 Each scenario also records its expected affected service (`none`, `worker`, or `api_worker_path`), which is scored against the report's `affected_service`. The worker outage is run by a host-side script, not an in-container controller. It is bounded to 1–120 s, always restarts the worker in `finally`, and writes its ground truth to `artifacts/worker-outages.jsonl`.
 
+On macOS, run long evaluations under `caffeinate -dims`: host sleep stalls trials and corrupts their timings. This happened to two trials on 2026-11-22; they were excluded and re-run.
+
 ## Keeping ground truth away from the investigators
 
 - Bundles contain only the 21 catalogue series and firing alert names. Their file names are opaque random IDs. Tests check that no label, scenario name, run ID, fault marker, or toxic name appears in a bundle.
